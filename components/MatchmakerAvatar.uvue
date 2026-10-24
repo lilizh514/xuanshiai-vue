@@ -14,6 +14,8 @@
 </template>
 
 <script setup lang="uts">
+import { resolveMediaUrl } from '@/api/config.uts'
+
 interface Props {
 	src?: string | null;
 	name?: string | null;
@@ -27,7 +29,10 @@ const props = withDefaults(defineProps<Props>(), {
 const imageFailed = ref(false);
 
 const avatarSource = computed(() => {
-	return props.src != null ? String(props.src).trim() : '';
+	const source = props.src != null ? String(props.src).trim() : '';
+	// 服务端可能下发裸相对路径（/storage/uploads/...），必须归一化成绝对地址，
+	// 否则小程序会按「包内资源」解析并加载失败（__pageframe__/storage/...）。
+	return source != '' ? resolveMediaUrl(source) : '';
 });
 
 const hasAvatar = computed(() => avatarSource.value.length > 0 && !imageFailed.value);

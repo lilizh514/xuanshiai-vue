@@ -436,13 +436,25 @@
 		for (const province of raw) {
 			if (province.name != values[0]) continue
 			const cities = Array.isArray(province.city) ? province.city as any[] : []
+			// 微信 mode="region" 在直辖市返回 ["北京市","北京市","东城区"]，
+			// 而数据集里直辖市只有一条 city.name="市辖区"，直接用 values[1] 比对会全不匹配，
+			// 一旦返回三个空串，省市级编码一起丢，location_completed 会永久为 0（完成度卡在 95）。
+			let matched: any = null
 			for (const city of cities) {
-				if (city.name != values[1]) continue
-				const areas = Array.isArray(city.area) ? city.area as any[] : []
-				for (const area of areas) {
-					if (area.name == values[2]) return { province: '' + province.code, city: '' + city.code, district: '' + area.code }
+				if (city.name == values[1]) {
+					matched = city
+					break
 				}
 			}
+			if (matched == null && cities.length == 1) matched = cities[0]
+			if (matched == null) return { province: '' + province.code, city: '', district: '' }
+			const areas = Array.isArray(matched.area) ? matched.area as any[] : []
+			for (const area of areas) {
+				if (area.name == values[2]) return { province: '' + province.code, city: '' + matched.code, district: '' + area.code }
+			}
+			// 区县名对不上（数据集缺该区县 / 选到「其他」）时也必须保住省+市，
+			// 否则资料完成度会永久少这 5 分。
+			return { province: '' + province.code, city: '' + matched.code, district: '' }
 		}
 		return { province: '', city: '', district: '' }
 	}
@@ -678,7 +690,13 @@
 				clearThoughtfulnessCache()
 			} else if (!res.success) {
 				// GET 失败保留旧结果，但必须把失败提示带到结果卡上，便于重试。
-				aiError.value = res.message != null ? '' + res.message : 'AI 用心度评审暂时不可用'
+				// 503 = 服务端 AI 能力未开启（AI_ENABLED=false / 未配 Key），
+				// 这不是网络故障也不是资料问题，不能引导用户反复重试。
+				if (res != null && Number(res.code) == 503) {
+					aiError.value = 'AI 用心度评审当前暂未开放，资料本身不受影响'
+				} else {
+					aiError.value = res.message != null ? '' + res.message : 'AI 用心度评审暂时不可用'
+				}
 			}
 		} catch (e) {
 			aiError.value = '网络异常，AI 用心度评审暂时不可用'
@@ -697,6 +715,12 @@
 			await sleep(80)
 			const res = await analyzeProfileThoughtfulness(trigger, editedKeys)
 			if (!res.success || res.data == null) {
+				// H8：503 表示服务端 AI 能力未开启，与网络失败要分开说，
+				// 否则用户会把「AI 评审没开」误读成「资料没保存」。
+				if (res != null && Number(res.code) == 503) {
+					aiError.value = 'AI 用心度评审当前暂未开放，资料已正常保存'
+					return false
+				}
 				aiError.value = res.message != null ? '' + res.message : 'AI 用心度分析失败，请稍后再试'
 				return false
 			}

@@ -4,7 +4,7 @@
  */
 
 import { request } from './request.uts'
-import { API_BASE_URL, USE_MOCK, getAccessToken, clearAuthTokens, buildApiUrl } from './config.uts'
+import { API_BASE_URL, USE_MOCK, getAccessToken, clearAuthTokens, buildApiUrl, resolveMediaUrl } from './config.uts'
 import {
   mockMatchmakerManagementCenterAccess,
   mockMatchmakerManagementCenterSnapshot,
@@ -29,7 +29,7 @@ function toMatchmakerCard(item: any) {
       if (entry.images != null) {
         const sourceImages = entry.images as any[]
         for (let j = 0; j < sourceImages.length; j++) {
-          const image = String(sourceImages[j]).trim()
+          const image = resolveMediaUrl(String(sourceImages[j]).trim())
           if (image.length > 0) images.push(image)
         }
       }
@@ -48,7 +48,7 @@ function toMatchmakerCard(item: any) {
   return {
     id: item.user_id != null ? Number(item.user_id) : Number(item.id),
     name: item.nickname != null && String(item.nickname).length > 0 ? String(item.nickname) : '服务红娘',
-    avatar: item.avatar != null ? String(item.avatar) : '',
+    avatar: item.avatar != null ? resolveMediaUrl(String(item.avatar)) : '',
     city: '',
     title: '平台认证服务红娘',
     introduction: item.intro != null ? String(item.intro) : '',

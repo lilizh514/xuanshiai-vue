@@ -66,7 +66,12 @@
 					<text class="completion-reminder-copy">{{ discoveryError }}</text>
 					<view class="completion-gate-button" @tap="loadHomeDiscovery"><text>重新加载</text></view>
 				</view>
-				<view v-if="!recommendLoading && recommendUsers.length === 0 && discoveryError == ''" class="completion-gate">
+				<view v-if="needLogin" class="completion-gate">
+					<text class="completion-gate-title">{{ authExpired ? '登录状态已失效' : '登录后查看推荐对象' }}</text>
+					<text class="completion-gate-copy">{{ authExpired ? '请重新登录后继续浏览公开推荐资料。' : '登录后即可按你的条件读取公开推荐资料。' }}</text>
+					<view class="completion-gate-button" @tap="goLogin"><text>去登录</text></view>
+				</view>
+				<view v-if="!needLogin && !recommendLoading && recommendUsers.length === 0 && discoveryError == ''" class="completion-gate">
 					<text class="completion-gate-title">暂时没有新的推荐</text>
 					<text class="completion-gate-copy">我们正在更新公开推荐资料，请稍后再来看看。</text>
 				</view>
@@ -933,6 +938,11 @@
 	// H3：推荐区块的加载态与整体刷新代际。初次加载显示加载中，
 	// 只有最新一次刷新允许写列表，旧刷新不回灌。
 	const recommendLoading = ref(false)
+	// H6：推荐区的「未登录 / 登录已失效」态。true 时不发请求，渲染登录引导，
+	// 不再让「没登录」冒充「平台没资料」。
+	const needLogin = ref(false)
+	// true = 服务端明确返回 401（登录已失效）；false = 从未登录或已重新登录。
+	const authExpired = ref(false)
 	let homeRefreshSeq = 0
 	// H3：广场区块独立的刷新失败提示（有缓存只提示未刷新，无缓存提示无法加载）。
 	const squareError = ref('')
@@ -1043,6 +1053,23 @@
 		if (currentIndex >= 0) recommendUsers.value.splice(currentIndex, 1, enriched)
 		recommendBackground.value = resolveMediaUrl(profile.background_wall)
 	}
+	// H6：401 的统一落地。清掉推荐/广场缓存并切到登录引导，
+	// 不把「无效或已过期的访问令牌」这类后端措辞直接抛给用户。
+	const applyUnauthorizedState = () => {
+		needLogin.value = true
+		authExpired.value = true
+		recommendUsers.value = []
+		recommendBackground.value = ''
+		invalidateFeedDynamics()
+		squareUsers.value = []
+		squareTotal.value = 0
+		discoveryError.value = ''
+		squareError.value = ''
+	}
+	// H6：未登录态入口。与既有 :779 / :1314 的跳转写法保持一致。
+	const goLogin = () => {
+		uni.navigateTo({ url: '/pages/auth/login' })
+	}
 	const loadHomeDiscovery = async () => {
 		discoveryError.value = ''
 		recommendLoading.value = true
@@ -1051,6 +1078,12 @@
 		const refreshSeq = homeRefreshSeq
 		try {
 			const recommendRes = await getDiscoveryRecommendations({ page: 1, page_size: 20 })
+			// H6：401 与刷新代际无关。鉴权失败必须立刻成态，
+			// 否则并发/重入时旧刷新会被代际守卫丢弃，页面就停在「暂无推荐」上。
+			if (recommendRes != null && !recommendRes.success && Number(recommendRes.code) == 401) {
+				applyUnauthorizedState()
+				return
+			}
 			if (refreshSeq != homeRefreshSeq) return
 			if (recommendRes != null && recommendRes.success && recommendRes.data != null) {
 				recommendUsers.value = recommendRes.data.items as any[]
@@ -1067,6 +1100,10 @@
 			// H3：推荐与广场各自记录独立结果，任一失败都要有局部提示并可重试；
 			// 广场失败保留上一轮已读数据，只提示「未刷新」，不假装已刷新。
 			const plazaRes = await getDiscoveryPlaza({ page: 1, page_size: 20 })
+			if (plazaRes != null && !plazaRes.success && Number(plazaRes.code) == 401) {
+				applyUnauthorizedState()
+				return
+			}
 			if (refreshSeq != homeRefreshSeq) return
 			if (plazaRes.success && plazaRes.data != null) {
 				squareUsers.value = plazaRes.data.items as any[]
@@ -1077,7 +1114,15 @@
 				squareError.value = plazaErrorText(squareUsers.value.length > 0, plazaMessage)
 			}
 		} finally {
-			if (refreshSeq == homeRefreshSeq) recommendLoading.value = false
+			if (refreshSeq == homeRefreshSeq) {
+				recommendLoading.value = false
+				// H6 兜底：本轮结束时 token 已空（并发请求触发的 401），也必须落到登录态，
+				// 不能让「没登录」停在「暂时没有新的推荐」上。
+				if (getAccessToken() == '') {
+					needLogin.value = true
+					discoveryError.value = ''
+				}
+			}
 		}
 	}
 	const plazaErrorText = (hasCached: boolean, message: string): string => {
@@ -1463,8 +1508,18 @@
 			}
 		}
 		resetDailyIfNeeded()
-		if (getAccessToken() != '') loadHomeDiscovery()
-		if (getAccessToken() != '') loadMembershipPlans()
+		if (getAccessToken() != '') {
+			needLogin.value = false
+			authExpired.value = false
+			loadHomeDiscovery()
+			loadMembershipPlans()
+		} else {
+			// H6：没有 token 时不再静默跳过，落到登录引导而不是「暂时没有新的推荐」。
+			needLogin.value = true
+			authExpired.value = false
+			recommendUsers.value = []
+			discoveryError.value = ''
+		}
 	})
 
 	onShow(() => {
@@ -1481,7 +1536,18 @@
 		// H5：返回首页时作废本人头像/MBTI 缓存，编辑资料后不再展示旧值；
 		// 下次打开合拍面板会重新读取（读取失败保留未加载状态）。
 		aiProfileLoaded.value = false
-		if (!welcomeVisible.value && getAccessToken() != '') loadHomeDiscovery()
+		if (!welcomeVisible.value) {
+			if (getAccessToken() != '') {
+				needLogin.value = false
+				authExpired.value = false
+				loadHomeDiscovery()
+			} else {
+				// H6：没有 token 时无条件落到登录态；若本次会话内刚发生过 401，保留「已失效」文案。
+				needLogin.value = true
+				recommendUsers.value = []
+				discoveryError.value = ''
+			}
+		}
 	})
 </script>
 

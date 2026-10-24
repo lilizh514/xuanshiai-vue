@@ -26,7 +26,7 @@
 
 			<view class="actions">
 				<button class="btn secondary" @click="handleBlock">屏蔽该用户</button>
-				<button class="btn primary" :disabled="submitting || reasonId == ''" @click="handleReport">
+				<button class="btn primary" :disabled="submitting || reasonId == ''" :class="{ 'btn-disabled': submitting || reasonId == '' }" @click="handleReport">
 					{{ submitting ? '提交中…' : '提交举报' }}
 				</button>
 			</view>
@@ -311,7 +311,7 @@
 		border-radius: 8px;
 	}
 
-	.btn[disabled] {
+	.btn.btn-disabled {
 		opacity: 0.5;
 	}
 </style>

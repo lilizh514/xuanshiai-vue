@@ -1,10 +1,10 @@
 ﻿/** API configuration for the deployed FastAPI service. */
 
 export const USE_MOCK = false
-export const API_BASE_URL = 'http://127.0.0.1:8000'
+export const API_BASE_URL = 'https://xhztest.xyz'
 export const ROLE_APPLICATION_USE_MOCK = false
 export const PAPER_PLANE_CHANCE_USE_MOCK = true
-export const LAN_API_BASE_URL = 'http://127.0.0.1:8000'
+export const LAN_API_BASE_URL = 'https://xhztest.xyz'
 
 // FastAPI mounts its router directly at /api/v1.
 export const API_PREFIX = '/api/v1'
@@ -14,6 +14,9 @@ export const REFRESH_TOKEN_KEY = 'xsa_refresh_token'
 export const CURRENT_USER_ID_KEY = 'xsa_user_id'
 export const ONBOARDING_MODE_KEY = 'xsa_onboarding_mode'
 export const ONBOARDING_COMPLETED_KEY = 'xsa_onboarding_completed'
+// token 与「签发它的后端地址」绑定。换环境后旧 token 必须视为无效，
+// 否则会拿上一套后端的 JWT 去请求新后端，必然 401（本次联调的根因）。
+export const TOKEN_BASE_KEY = 'xsa_token_base'
 
 // 开发态仅可使用本地演示身份，禁止提交真实 token。
 export const FASTAPI_AUTO_ENTER_COMMUNITY = false
@@ -31,14 +34,25 @@ export const MOCK_DELAY = 300
 export function getAccessToken(): string {
   try {
     const token = uni.getStorageSync(ACCESS_TOKEN_KEY)
-    if (token != null && token !== '') return '' + token
+    if (token == null || token === '') return ''
+    const boundBase = uni.getStorageSync(TOKEN_BASE_KEY)
+    const base = boundBase != null ? String(boundBase) : ''
+    // 空值 = 升级前的历史 token，按当前环境放行，避免升级即全员掉登录。
+    if (base != '' && base != API_BASE_URL) {
+      clearAuthTokens()
+      return ''
+    }
+    return '' + token
   } catch (e) {}
   return ''
 }
 
 export function setAuthTokens(accessToken: string, refreshToken: string = '') {
   try {
-    if (accessToken != null && accessToken !== '') uni.setStorageSync(ACCESS_TOKEN_KEY, accessToken)
+    if (accessToken != null && accessToken !== '') {
+      uni.setStorageSync(ACCESS_TOKEN_KEY, accessToken)
+      uni.setStorageSync(TOKEN_BASE_KEY, API_BASE_URL)
+    }
     if (refreshToken != null && refreshToken !== '') uni.setStorageSync(REFRESH_TOKEN_KEY, refreshToken)
     else uni.removeStorageSync(REFRESH_TOKEN_KEY)
   } catch (e) {}
@@ -55,6 +69,7 @@ export function clearAuthTokens() {
     uni.removeStorageSync(CURRENT_USER_ID_KEY)
     uni.removeStorageSync(ONBOARDING_MODE_KEY)
     uni.removeStorageSync(ONBOARDING_COMPLETED_KEY)
+    uni.removeStorageSync(TOKEN_BASE_KEY)
   } catch (e) {}
 }
 
@@ -97,6 +112,18 @@ export function buildWsTicketUrl(path: string, ticket: string): string {
   }
   const sep = p.indexOf('?') >= 0 ? '&' : '?'
   return base + API_PREFIX + p + sep + 'ticket=' + encodeURIComponent(ticket)
+}
+
+export function buildLiveWsUrl(path: string, ticket: string, lastVersion: number = 0): string {
+  let p = path != null ? ('' + path) : ''
+  if (p.charAt(0) != '/') p = '/' + p
+  let base = API_BASE_URL
+  if (base.indexOf('https://') == 0) {
+    base = 'wss://' + base.substring(8)
+  } else if (base.indexOf('http://') == 0) {
+    base = 'ws://' + base.substring(7)
+  }
+  return base + API_PREFIX + p + '?ticket=' + encodeURIComponent(ticket) + '&last_version=' + Math.max(0, Number(lastVersion))
 }
 
 export function resolveMediaUrl(value: any): string {

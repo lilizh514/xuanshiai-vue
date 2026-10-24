@@ -17,6 +17,8 @@ graphify-out/
 .serena/
 docs/superpowers/
 .claude
+# Agent 工作区（含 memory/ 工作日志，属本地私有数据，不上传）
+.workbuddy/
 /static/xuanshiai/
 mock-local/
 .agents/
@@ -31,3 +33,5 @@ open-wechat-devtools.bat
 .config.uts
 .workbuddyproject.private.config.json
 project.private.config.json.bobibak
+
+no upload

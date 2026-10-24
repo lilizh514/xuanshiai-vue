@@ -11,6 +11,8 @@ import {
   CURRENT_USER_ID_KEY,
   getAccessToken,
   clearAuthTokens,
+  ONBOARDING_MODE_KEY,
+  ONBOARDING_COMPLETED_KEY,
   buildApiUrl
 } from './config.uts'
 import { debugLog } from '@/utils/debug-log.uts'
@@ -177,7 +179,11 @@ async function httpRequest(options: any) {
           return
         }
         if (status == 401) {
+          // 401 = 会话过期，不是新账号：清凭证，但保留已完成的引导状态，
+          // 避免用户重登后被重新推回 onboarding（parent 模式还会丢路由依据）。
+          const preserved = snapshotOnboardingState()
           clearAuthTokens()
+          restoreOnboardingState(preserved)
         }
         const message = extractDetail(raw)
         resolve({
@@ -203,4 +209,36 @@ async function httpRequest(options: any) {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * 401 只应清会话凭证，不应重置「已完成引导」这类持久状态。
+ * clearAuthTokens() 的清空范围是既有契约（有测试守护），这里用快照在清空后恢复。
+ * 返回 [onboarding_mode, onboarding_completed]，任一项为空串表示原本就没有。
+ */
+function snapshotOnboardingState(): string[] {
+  const values: string[] = []
+  let mode = ''
+  let completed = ''
+  try {
+    const rawMode = uni.getStorageSync(ONBOARDING_MODE_KEY)
+    if (rawMode != null) mode = String(rawMode)
+  } catch (e) {}
+  try {
+    const rawDone = uni.getStorageSync(ONBOARDING_COMPLETED_KEY)
+    if (rawDone != null) completed = String(rawDone)
+  } catch (e) {}
+  values.push(mode)
+  values.push(completed)
+  return values
+}
+
+function restoreOnboardingState(preserved: string[]) {
+  if (preserved.length < 2) return
+  try {
+    if (preserved[0] != '') uni.setStorageSync(ONBOARDING_MODE_KEY, preserved[0])
+  } catch (e) {}
+  try {
+    if (preserved[1] != '') uni.setStorageSync(ONBOARDING_COMPLETED_KEY, preserved[1])
+  } catch (e) {}
 }

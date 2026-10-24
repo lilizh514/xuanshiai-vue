@@ -22,12 +22,24 @@
       </view>
       <text v-if="actionHint != ''" class="live-action-hint">{{ actionHint }}</text>
       <text v-if="socketState != ''" class="live-socket-state">{{ socketState }}</text>
+      <view v-if="stageUsers.length > 0" class="live-stage-users">
+        <text class="live-stage-title">舞台互动</text>
+        <view v-for="stageUser in stageUsers" :key="stageUser.user_id" class="live-stage-user">
+          <text class="live-stage-user-id">用户 {{ stageUser.user_id }}</text>
+          <view class="live-action-row">
+            <view v-if="selected.status == 'HEART_LIGHT'" class="live-action" @click="sendInteraction(stageUser.user_id, 'HEART_LIGHT')"><text>亮灯</text></view>
+            <view v-if="selected.status == 'SELECT'" class="live-action" @click="sendInteraction(stageUser.user_id, 'SELECT')"><text>选择</text></view>
+            <view v-if="selected.status == 'DOUBLE_CONFIRM'" class="live-action" @click="sendInteraction(stageUser.user_id, 'CONFIRM')"><text>确认</text></view>
+            <view class="live-action danger" @click="reportStageUser(stageUser.user_id)"><text>举报</text></view>
+          </view>
+        </view>
+      </view>
     </view>
   </view>
 </template>
 
 <script setup lang="uts">
-import { getLiveSessions, getLiveSession, getMyLiveReservation, reserveLiveSession, cancelLiveReservation, submitLiveDeviceCheck, checkInLiveSession, leaveLiveStage, connectLiveEvents, liveStatusLabel, liveErrorMessage } from '@/api'
+import { getLiveSessions, getLiveSession, getMyLiveReservation, reserveLiveSession, cancelLiveReservation, submitLiveDeviceCheck, checkInLiveSession, leaveLiveStage, getLiveWsTicket, createLiveInteraction, reportLiveUser, connectLiveEvents, liveStatusLabel, liveErrorMessage } from '@/api'
 import { getAccessToken } from '@/api/config.uts'
 const sessions = ref<any[]>([])
 const selected = ref<any | null>(null)
@@ -39,6 +51,9 @@ const errorText = ref('')
 const socketState = ref('')
 const stageStatus = ref('')
 const lastVersion = ref(0)
+const lastEventVersion = ref(0)
+const seenEventKeys = ref([] as string[])
+const stageSeats = ref<any[]>([])
 let socket: any = null
 let reconnectTimer: any = null
 let socketGeneration = 0
@@ -59,6 +74,7 @@ const canConfirmDevice = computed((): boolean => registration.value != null && r
 const canCheckIn = computed((): boolean => selected.value != null && selected.value.status == 'CHECK_IN' && registration.value != null && registration.value.status == 'RESERVED' && registration.value.device_check_passed == true)
 const canCancelReservation = computed((): boolean => registration.value != null && registration.value.status == 'RESERVED')
 const canLeaveStage = computed((): boolean => stageStatus.value == 'ON_STAGE')
+const stageUsers = computed((): any[] => stageSeats.value.filter((seat: any): boolean => seat != null && seat.status == 'ON_STAGE' && Number(seat.user_id) != Number(registration.value != null ? registration.value.user_id : 0)))
 const actionHint = computed((): string => {
   if (selected.value == null) return ''
   if (selected.value.status == 'CLOSED') return '本场已结束'
@@ -119,12 +135,30 @@ const closeSocket = () => {
   if (current != null && current.close != null) current.close({})
 }
 const updateStageFromSnapshot = (snapshot: any) => {
-  if (snapshot == null || !Array.isArray(snapshot.seats) || registration.value == null) return
+  if (snapshot == null || !Array.isArray(snapshot.seats)) return
+  stageSeats.value = snapshot.seats as any[]
+  if (registration.value == null) return
   stageStatus.value = ''
   for (let i = 0; i < snapshot.seats.length; i++) {
     const seat = snapshot.seats[i]
     if (Number(seat.user_id) == Number(registration.value.user_id)) { stageStatus.value = '' + seat.status; return }
   }
+}
+const eventKey = (payload: any): string => {
+  if (payload == null) return ''
+  if (payload.event_id != null && String(payload.event_id) != '') return 'id:' + String(payload.event_id)
+  if (payload.event_version != null) return 'version:' + String(payload.event_version)
+  return ''
+}
+const rememberEvent = (payload: any): boolean => {
+  const key = eventKey(payload)
+  if (key == '') return true
+  if (seenEventKeys.value.indexOf(key) >= 0) return false
+  seenEventKeys.value.push(key)
+  if (seenEventKeys.value.length > 250) seenEventKeys.value.splice(0, seenEventKeys.value.length - 200)
+  const version = Number(payload.event_version != null ? payload.event_version : 0)
+  if (version > lastEventVersion.value) lastEventVersion.value = version
+  return true
 }
 const recoverSocket = async (generation: number) => {
   if (recoveryGeneration == generation) return
@@ -145,22 +179,35 @@ const handleSocketDown = (generation: number) => {
   socketState.value = reconnectAttempts >= 3 ? '实时状态暂不可用，已通过刷新同步' : '实时连接已断开，正在同步场次状态'
   recoverSocket(generation)
 }
-const connectSocket = () => {
+const connectSocket = async () => {
   if (disposed || selectedId.value <= 0 || getAccessToken() == '' || registration.value == null || registration.value.status == 'CANCELLED') { socketState.value = ''; return }
   if (socket != null && socket.close != null) socket.close({})
   socketGeneration = socketGeneration + 1
   const generation = socketGeneration
+  const ticketResponse = await getLiveWsTicket(selectedId.value)
+  if (disposed || generation != socketGeneration) return
+  if (!ticketResponse.success || ticketResponse.data == null || ticketResponse.data.ticket == null) {
+    socketState.value = liveErrorMessage(ticketResponse, 'Realtime connection unavailable')
+    return
+  }
   socketState.value = '正在连接场次状态...'
   socket = connectLiveEvents(
     selectedId.value,
+    String(ticketResponse.data.ticket),
+    lastEventVersion.value,
     (payload: any) => {
       if (generation != socketGeneration || payload == null) return
+      if (payload.event_type != 'session.snapshot' && !rememberEvent(payload)) return
+      const payloadEventVersion = Number(payload.event_version != null ? payload.event_version : 0)
+      if (payloadEventVersion > lastEventVersion.value) lastEventVersion.value = payloadEventVersion
       if (payload.event_type == 'session.snapshot' && payload.payload != null && selected.value != null) {
-        const incomingVersion = Number(payload.version != null ? payload.version : 0)
-        if (incomingVersion > lastVersion.value) {
+        const incomingVersion = Number(payload.state_version != null ? payload.state_version : 0)
+        if (incomingVersion >= lastVersion.value) {
           selected.value.status = payload.payload.status
-          selected.value.state_version = incomingVersion
-          lastVersion.value = incomingVersion
+          if (incomingVersion > lastVersion.value) {
+            selected.value.state_version = incomingVersion
+            lastVersion.value = incomingVersion
+          }
           updateStageFromSnapshot(payload.payload)
           updateSelectedInList()
         }
@@ -182,6 +229,8 @@ const selectSession = async (item: any) => {
   registration.value = null
   stageStatus.value = ''
   lastVersion.value = Number(item.state_version != null ? item.state_version : 0)
+  lastEventVersion.value = 0
+  seenEventKeys.value = []
   reconnectAttempts = 0
   await syncSelectedState(sequence, true)
   if (sequence == selectionSequence) connectSocket()
@@ -218,6 +267,40 @@ const confirmDevice = () => {
 }
 const checkIn = () => runAction(() => checkInLiveSession(selectedId.value), '签到成功')
 const leaveStage = () => runAction(() => leaveLiveStage(selectedId.value), '已离开舞台')
+const sendInteraction = async (targetUserId: number, interactionType: string) => {
+  if (actionBusy.value || !canLeaveStage.value) return
+  actionBusy.value = true
+  try {
+    const response = await createLiveInteraction(selectedId.value, targetUserId, interactionType)
+    if (!response.success) { uni.showToast({ title: liveErrorMessage(response), icon: 'none' }); return }
+    uni.showToast({ title: '互动已提交', icon: 'none' })
+  } catch (e) {
+    uni.showToast({ title: '互动提交失败，请稍后重试', icon: 'none' })
+  } finally {
+    actionBusy.value = false
+  }
+}
+const reportStageUser = (targetUserId: number) => {
+  if (actionBusy.value) return
+  uni.showModal({
+    title: '举报场内用户',
+    content: '确认提交对该用户的场内举报吗？',
+    confirmText: '提交举报',
+    success: async (result: any) => {
+      if (!result.confirm) return
+      actionBusy.value = true
+      try {
+        const response = await reportLiveUser(selectedId.value, targetUserId, 'OTHER', '直播场次内举报')
+        if (!response.success) { uni.showToast({ title: liveErrorMessage(response), icon: 'none' }); return }
+        uni.showToast({ title: '举报已提交', icon: 'none' })
+      } catch (e) {
+        uni.showToast({ title: '举报提交失败，请稍后重试', icon: 'none' })
+      } finally {
+        actionBusy.value = false
+      }
+    }
+  })
+}
 onMounted(() => { loadSessions() })
 onUnmounted(() => { disposed = true; closeSocket() })
 </script>
@@ -231,4 +314,5 @@ onUnmounted(() => { disposed = true; closeSocket() })
 .live-notice-title, .live-notice-copy, .live-empty-copy, .live-session-meta, .live-session-rules, .live-action-hint, .live-socket-state { display: block; }.live-notice-title { color: var(--ink, #1A1A1A); font-size: 22rpx; font-weight: 800; }.live-notice-copy { margin-top: 6rpx; color: var(--ink2, #5A6B5C); font-size: 20rpx; line-height: 1.5; }.live-error { color: #B65F5F; font-size: 21rpx; }.live-empty { color: var(--muted, #A0B0A2); font-size: 22rpx; text-align: center; }.live-empty-copy { margin-top: 6rpx; font-size: 19rpx; }
 .live-session.selected { border-color: var(--accent2, #5BAF80); background: var(--accent-bg, #E8F5EE); }.live-session-status { color: var(--accent2, #5BAF80); font-size: 19rpx; font-weight: 800; }.live-session-time, .live-detail-line, .live-session-meta { color: var(--muted, #A0B0A2); font-size: 19rpx; }.live-session-title { display: block; margin-top: 12rpx; color: var(--ink, #1A1A1A); font-size: 27rpx; font-weight: 800; }.live-session-meta { margin-top: 8rpx; }.live-session-rules { margin-top: 10rpx; color: var(--ink2, #5A6B5C); font-size: 20rpx; line-height: 1.45; }
 .live-actions { display: flex; flex-direction: column; gap: 16rpx; }.live-detail-value { color: var(--ink, #1A1A1A); }.live-registration { display: flex; flex-direction: column; gap: 6rpx; color: var(--ink2, #5A6B5C); font-size: 20rpx; }.live-action-row { flex-wrap: wrap; justify-content: flex-start; }.live-action { min-height: 56rpx; padding: 0 18rpx; border-radius: 14rpx; background: var(--accent-bg, #E8F5EE); color: var(--accent2, #5BAF80); display: flex; align-items: center; justify-content: center; font-size: 20rpx; font-weight: 800; }.live-action.primary { background: var(--accent2, #5BAF80); color: #FFFFFF; }.live-action.danger { background: #FFF0F0; color: #B65F5F; }.live-action.disabled { opacity: 0.55; }.live-action-hint, .live-socket-state { color: var(--muted, #A0B0A2); font-size: 18rpx; }
+.live-stage-users { margin-top: 16rpx; padding-top: 16rpx; border-top: 1px solid var(--line, #E8EDE6); }.live-stage-title { display: block; color: var(--ink, #1A1A1A); font-size: 21rpx; font-weight: 800; }.live-stage-user { margin-top: 12rpx; }.live-stage-user-id { color: var(--ink2, #5A6B5C); font-size: 19rpx; }
 </style>

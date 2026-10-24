@@ -1,6 +1,6 @@
 /** 直播相亲 R0 控制面 API；不伪造尚未接入的媒体能力。 */
 import { request } from './request.uts'
-import { buildWsUrl, getAccessToken } from './config.uts'
+import { buildLiveWsUrl } from './config.uts'
 
 export const LIVE_STATUSES = [
   'DRAFT', 'SCHEDULED', 'CHECK_IN', 'WARMUP', 'OPEN', 'INTRO',
@@ -34,17 +34,19 @@ export function createLiveIdempotencyKey(): string { return 'live-' + Date.now()
 export async function createLiveInteraction(sessionId: number, targetUserId: number, interactionType: string, key: string = ''): Promise<any> { const idempotencyKey = key.trim().length >= 8 ? key.trim() : createLiveIdempotencyKey(); return request({ url: '/live/sessions/' + sessionId + '/interactions', method: 'POST', data: { target_user_id: targetUserId, interaction_type: interactionType }, headers: { 'Idempotency-Key': idempotencyKey } }) }
 export async function reportLiveUser(sessionId: number, targetUserId: number, category: string, description: string = ''): Promise<any> { return request({ url: '/live/sessions/' + sessionId + '/reports', method: 'POST', data: { target_user_id: targetUserId, category, description: description.trim() != '' ? description.trim() : null } }) }
 export async function getLiveRtcTicket(sessionId: number): Promise<any> { return request({ url: '/live/sessions/' + sessionId + '/rtc-ticket', method: 'POST', data: {} }) }
+export async function getLiveWsTicket(sessionId: number): Promise<any> { return request({ url: '/live/sessions/' + sessionId + '/ws-ticket', method: 'POST', data: {} }) }
 
 export function connectLiveEvents(
   sessionId: number,
+  ticket: string,
+  lastVersion: number,
   onMessage: (payload: any) => void,
   onError: (() => void) | null = null,
   onOpen: (() => void) | null = null,
   onClose: (() => void) | null = null
 ): any {
-  const token = getAccessToken()
-  if (token == '') return null
-  const socket = uni.connectSocket({ url: buildWsUrl('/live/sessions/' + sessionId + '/events', token), complete: () => {} })
+  if (ticket == '') return null
+  const socket = uni.connectSocket({ url: buildLiveWsUrl('/live/sessions/' + sessionId + '/events', ticket, lastVersion), complete: () => {} })
   socket.onMessage((event: any) => { try { onMessage(typeof event.data == 'string' ? JSON.parse(event.data) : event.data) } catch (e) {} })
   socket.onError(() => { if (onError != null) onError() })
   socket.onOpen(() => { if (onOpen != null) onOpen() })

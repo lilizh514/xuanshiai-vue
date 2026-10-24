@@ -12,7 +12,7 @@
 
 			<view class="card-tags" v-if="data.tags != null && data.tags.length > 0">
 				<view v-for="(tag, index) in data.tags.slice(0, 2)" :key="index" class="card-tag">
-					<text>{{ tag }}</text>
+					<text class="card-tag-text">{{ tag }}</text>
 				</view>
 			</view>
 
@@ -29,8 +29,8 @@
 
 			<view class="card-footer">
 				<view v-if="data.certification || data.badge" class="card-certification">
-					<text class="certification-mark">✓</text>
-					<text>已认证</text>
+					<text class="certification-mark certification-text">✓</text>
+					<text class="certification-text">已认证</text>
 				</view>
 				<view class="card-button" @click.stop="handleContact">
 					<text>{{ actionText }}</text>
@@ -175,7 +175,7 @@ const handleContact = () => {
 		max-width: 100%;
 	}
 
-	.card-tag text {
+	.card-tag-text {
 		font-size: 17rpx;
 		line-height: 1.25;
 		font-weight: 700;
@@ -215,7 +215,7 @@ const handleContact = () => {
 		color: var(--muted);
 	}
 
-	.card-certification text {
+	.certification-text {
 		font-size: 18rpx;
 		line-height: 1.25;
 		font-weight: 600;
@@ -262,7 +262,7 @@ const handleContact = () => {
 		line-height: 1.55;
 	}
 
-	.matchmaker-card.large-text .card-tag text,
+	.matchmaker-card.large-text .card-tag-text,
 	.matchmaker-card.large-text .meta-label {
 		font-size: 14px;
 	}
