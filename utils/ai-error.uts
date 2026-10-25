@@ -1,0 +1,72 @@
+// AI 能力的失败原因分诊。
+// 后端在 AI 未开放/暂不可用/格式解析失败时会返回不同的 code + businessCode，
+// 前端过去一律当成"网络异常"或直接把后端措辞抛给用户，于是同一类问题
+// 会出现「AI返回格式无效」「请求超时」「功能暂时不可用」三种观感，
+// 用户也不知道是"功能没开"还是"自己网络差"。
+// 这里统一成三档：未开放（不要重试）/ 暂时不可用（可重试）/ 网络问题（可重试）。
+
+export interface AiFailureNotice {
+	/** 卡片标题 */
+	title: string
+	/** 说明文案 */
+	hint: string
+	/** 是否值得给用户重试入口 */
+	retryable: boolean
+	/** 是否为"功能未开放"，UI 应隐藏重试与用量提示 */
+	disabled: boolean
+}
+
+/** AI 功能当前的开放状态：disabled=未开放，temporary=暂不可用，network=网络问题 */
+export function aiFailureNotice(res: any, featureLabel: string = 'AI 功能'): AiFailureNotice {
+	const code = res != null && res.code != null ? Number(res.code) : 0
+	const businessCode = res != null && res.businessCode != null ? ('' + res.businessCode) : ''
+	const rawMessage = res != null && res.message != null ? ('' + res.message).trim() : ''
+
+	if (businessCode == 'AI_FEATURE_DISABLED') {
+		return {
+			title: featureLabel + '暂未开放',
+			hint: '该功能还在灰度中，开放后会在本页提示，不影响资料保存与浏览。',
+			retryable: false,
+			disabled: true
+		}
+	}
+	if (businessCode == 'AI_TEMPORARILY_UNAVAILABLE' || code == 503) {
+		return {
+			title: featureLabel + '暂时不可用',
+			hint: '服务正在恢复中，稍后重试即可，资料本身不受影响。',
+			retryable: true,
+			disabled: false
+		}
+	}
+	if (code == 429) {
+		return {
+			title: featureLabel + '次数已用完',
+			hint: '今日额度已用尽，明天再来或查看会员权益。',
+			retryable: false,
+			disabled: false
+		}
+	}
+	if (code == 401) {
+		return {
+			title: '登录状态已失效',
+			hint: '请重新登录后再使用' + featureLabel + '。',
+			retryable: false,
+			disabled: false
+		}
+	}
+	if (code == 0 || code == -1) {
+		// request 层超时/断网统一落到这里
+		return {
+			title: '网络超时',
+			hint: '请检查网络后重试。',
+			retryable: true,
+			disabled: false
+		}
+	}
+	return {
+		title: featureLabel + '暂时不可用',
+		hint: rawMessage != '' ? rawMessage : '请稍后重试，资料本身不受影响。',
+		retryable: true,
+		disabled: false
+	}
+}

@@ -317,7 +317,9 @@ export async function polishPaperPlaneText(content: string, field: string, style
   const res = await request({
     url: '/ai/profile/polish',
     method: 'POST',
-    data: { content: original, style: style != '' ? style : 'natural', max_length: normalizedMaxLength },
+    // field 之前被函数签名接收却从未发送，后端若按场景分 prompt 就拿不到上下文，
+    // 表现为"润色前后没差别"。这里一并提交（后端不认识时会被忽略，不构成破坏性变更）。
+    data: { content: original, field: field != null ? '' + field : '', style: style != '' ? style : 'natural', max_length: normalizedMaxLength },
     mockData: { original: original, polished: original, style: style != '' ? style : 'natural', changed_points: [] }
   })
   if (!res.success) {

@@ -8,9 +8,9 @@
 			<view class="error-mark"><text>!</text></view>
 			<text class="error-title">{{ detailQuotaExhausted ? '今日浏览额度已用完' : '资料暂时无法打开' }}</text>
 			<text class="error-description">{{ detailError }}</text>
-			<text class="error-hint">{{ detailQuotaExhausted ? '开通会员可增加每日浏览额度' : '请检查网络后重试' }}</text>
+			<text class="error-hint">{{ detailQuotaExhausted ? (viewerIsVip ? '会员额度已用完，可用积分兑换今日查看次数' : '开通会员可增加每日浏览额度') : '请检查网络后重试' }}</text>
 			<view class="error-actions">
-				<view class="error-retry" @tap="handleDetailErrorAction"><text>{{ detailQuotaExhausted ? '开通会员' : '重新加载' }}</text></view>
+				<view class="error-retry" @tap="handleDetailErrorAction"><text>{{ detailQuotaExhausted ? (viewerIsVip ? '去兑换次数' : '开通会员') : '重新加载' }}</text></view>
 				<view class="error-cancel" @tap="onBack"><text>返回</text></view>
 			</view>
 		</view>
@@ -88,6 +88,14 @@
 					<view v-if="user.expect.length > 0" class="vip-section-card">
 						<text class="vip-section-title">Ta的期待</text>
 						<view v-for="(item, index) in user.expect" :key="index" class="qa-card"><text class="qa-answer">{{ item }}</text></view>
+					</view>
+
+					<view v-if="user.qaAnswers.length > 0" id="anchor-qa" class="vip-section-card">
+						<text class="vip-section-title">Ta的问答</text>
+						<view v-for="(item, index) in user.qaAnswers" :key="index" class="qa-card">
+							<text class="qa-question">{{ item.question }}</text>
+							<text class="qa-answer">{{ item.answer }}</text>
+						</view>
 					</view>
 
 					<view v-if="dynamics.length > 0" id="anchor-dynamics" class="vip-section-card">
@@ -235,6 +243,8 @@ import { resolveMediaUrl, getAccessToken } from '@/api/config.uts'
 import locationJson from '@/data/location.json'
 import { SPOTLIGHT_AMOUNT, paySpotlight } from '@/api/spotlight.uts'
 import { guardRealName } from '@/utils/realNameGate.uts'
+import { incomeDisplayText, locationDisplayByCodes } from '@/utils/profile-field-display.uts'
+import { recordProfileView, rollbackProfileView } from '@/utils/quota.uts'
 import { attachmentStyleLabel, narrativeBadgeVisible } from '@/utils/moxiang-badge.uts'
 
 const isLockedView = ref(false)
@@ -263,18 +273,41 @@ const user = ref({
 	detailLocked: false,
 	name: '', age: '', avatar: '', isVIP: false, job: '', edu: '', city: '',
 	online: '', distance: '', recentActivity: '', match: 0, matchAvailable: false, mbti: '', tags: [], bio: '',
-	cover: '', photos: [], lifePhotos: [], expect: [], basicInfo: [],
+	cover: '', photos: [], lifePhotos: [], expect: [], basicInfo: [], qaAnswers: [] as any[],
 	moxiangPersonaTitle: '',
 	moxiangPersonaTags: [] as string[],
 	moxiangAttachmentStyle: ''
 })
 
-const certs = ref([
-	{ icon: '盾', shortLabel: '实名', label: '实名认证', desc: '已通过平台实名认证' },
-	{ icon: '学', shortLabel: '学历', label: '学历认证', desc: '学历信息已核验' },
-	{ icon: '像', shortLabel: '头像', label: '头像认证', desc: '头像为本人真实照片' },
-	{ icon: '房', shortLabel: '房产', label: '房产认证', desc: '房产信息已认证' }
-])
+// 认证标签 → 展示项。只翻译后端真实下发的标签，不凭空补"房产认证"之类的结论。
+const CERT_META: any = {
+	'实名': { icon: '盾', desc: '已通过平台实名认证' },
+	'实名认证': { icon: '盾', desc: '已通过平台实名认证' },
+	'学历': { icon: '学', desc: '学历信息已核验' },
+	'学历认证': { icon: '学', desc: '学历信息已核验' },
+	'头像': { icon: '像', desc: '头像为本人真实照片' },
+	'头像认证': { icon: '像', desc: '头像为本人真实照片' },
+	'单身承诺': { icon: '誓', desc: '已签署单身承诺书' }
+}
+
+const buildCertsFromTags = (tags: any): any[] => {
+	const list: any[] = []
+	if (!Array.isArray(tags)) return list
+	for (const raw of tags as any[]) {
+		const label = ('' + raw).trim()
+		if (label == '') continue
+		const meta = CERT_META[label] != null ? CERT_META[label] : { icon: '✓', desc: '已通过平台认证' }
+		list.push({
+			icon: meta.icon,
+			shortLabel: label,
+			label: label.indexOf('认证') >= 0 ? label : label + '认证',
+			desc: meta.desc
+		})
+	}
+	return list
+}
+
+const certs = ref([] as any[])
 
 const dynamics = ref([] as any[])
 
@@ -355,27 +388,13 @@ const formatDimension = (raw: any, unit: string): string => {
 	return output.endsWith(unit) ? output : output + unit
 }
 
-const formatIncome = (raw: any): string => {
-	if (raw == null || raw === '') return '未填写'
-	const text = '' + raw
-	const amount = Number(text)
-	if (!isNaN(amount) && text.trim() != '') {
-		// 初始登录问卷把收入文本换算成数字存储，这里反向映射回登录时的枚举文案，保证口径一致
-		if (amount == 50000) return '小于10w'
-		if (amount == 150000) return '10-20w'
-		if (amount == 400000) return '30-50w'
-		if (amount == 750000) return '50-100w'
-		if (amount >= 1000000) return '100w以上'
-		const wan = Math.round(amount / 1000) / 10
-		return (wan % 1 == 0 ? '' + Math.round(wan) : '' + wan) + 'w'
-	}
-	return text.replace(/万/g, 'w')
-}
+// 统一口径：收入展示走 utils 里的唯一实现，避免首页/详情/编辑三处各写一份
+const formatIncome = (raw: any): string => incomeDisplayText(raw)
 
 user.value = {
 	id: 0, name: '', detailLocked: false, age: '', avatar: '', isVIP: false, job: '', edu: '', city: '',
 	online: '', distance: '', recentActivity: '', match: 0, matchAvailable: false, tags: [], bio: '',
-	cover: '', photos: [], lifePhotos: [], expect: [], basicInfo: [],
+	cover: '', photos: [], lifePhotos: [], expect: [], basicInfo: [], qaAnswers: [] as any[],
 	moxiangPersonaTitle: '',
 	moxiangPersonaTags: [] as string[],
 	moxiangAttachmentStyle: ''
@@ -439,6 +458,18 @@ const mapDetailUser = (raw: any, id: number) => {
 	const expectations = profile.tag_selections != null && Array.isArray(profile.tag_selections.relationship_expectation)
 		? profile.tag_selections.relationship_expectation as string[]
 		: Array.isArray(card.expect) && card.expect.length > 0 ? card.expect as string[] : []
+	// 「关于我」公开问答：AI 画像整理成的自我介绍与三题回答会写回 user_profile.qa_answers，
+	// 后端 get_profile 已返回该字段（public 脱敏分支不剔除），只渲染有答案的题。
+	const rawQaAnswers = Array.isArray(profile.qa_answers) ? profile.qa_answers as any[] : (Array.isArray(card.qa_answers) ? card.qa_answers as any[] : [])
+	const qaAnswers: any[] = []
+	for (let qaIndex = 0; qaIndex < rawQaAnswers.length; qaIndex++) {
+		const item: any = rawQaAnswers[qaIndex]
+		if (item == null || typeof item != 'object') continue
+		const answer = String(item.answer ?? '').trim()
+		if (answer == '') continue
+		const question = String(item.question ?? '').trim()
+		qaAnswers.push({ question: question != '' ? question : '关于我', answer: answer })
+	}
 	const mappedInfo = [
 		[{ label: '年龄', value: age == missing ? missing : age + '岁' }, { label: '身高', value: height }, { label: '体重', value: weight }],
 		[{ label: '星座', value: constellation }, { label: '学历', value: edu }, { label: '职业', value: job }],
@@ -486,11 +517,16 @@ const mapDetailUser = (raw: any, id: number) => {
 		photos,
 		lifePhotos,
 		expect: expectations,
+		qaAnswers: qaAnswers,
 		basicInfo: mappedInfo,
 		moxiangPersonaTitle,
 		moxiangPersonaTags,
 		moxiangAttachmentStyle
 	}
+	// 认证区曾硬编码「实名/学历/头像/房产」四项并在初始化后清空，
+	// 结果既永远不渲染、又虚构了不存在的「房产认证」。
+	// 现在只认后端下发的 certification_tags（与首页名片同一数据源），无数据则整块隐藏。
+	certs.value = buildCertsFromTags(card.certification_tags != null ? card.certification_tags : (profile.certification_tags != null ? profile.certification_tags : []))
 	applyUserId.value = user.value.id
 }
 
@@ -552,8 +588,12 @@ const load = async () => {
 			}
 		} else {
 			const message = res != null && res.message != null ? '' + res.message : '请稍后重试'
-			detailQuotaExhausted.value = res != null && Number(res.code) == 429 && message.indexOf('浏览额度') >= 0
-			detailError.value = detailQuotaExhausted.value ? '今日完整浏览额度已用完' : message
+			const isQuota = res != null && Number(res.code) == 429 && message.indexOf('浏览额度') >= 0
+			detailQuotaExhausted.value = isQuota
+			detailError.value = isQuota ? '今日可查看的新资料已用完' : message
+			// 本地已为该用户记账、但服务端判定无额度：把这一位还回去，避免白扣。
+			// rollbackProfileView 对未记录的 id 是无操作，回看已浏览用户被 429 不会误删记录。
+			if (isQuota) rollbackProfileView(user.value.id)
 		}
 	} catch (e) {
 		detailError.value = '网络异常，请稍后重试'
@@ -648,6 +688,15 @@ onMounted(async () => {
 	user.value.id = parsed
 	applyUserId.value = parsed
 	await loadViewerMembership()
+	// 打开他人完整资料计入一次「可查看人数」；本人主页、预览、红娘代看不计入。
+	// 该记录是幂等的：若首页切卡已为该用户记过账，此处不会重复扣。
+	const countsAsBrowse = !isOwnProfile.value && !isPreview.value && !fromMatchmaker.value && parsed > 0
+	if (countsAsBrowse && !recordProfileView(parsed)) {
+		detailQuotaExhausted.value = true
+		detailError.value = '今日可查看的新资料已用完'
+		detailLoading.value = false
+		return
+	}
 	await load()
 	detailLoadedOnce = true
 	if (!isOwnProfile.value && !isPreview.value && !fromMatchmaker.value && uni.getStorageSync('xsa_ai_avatar_guide_shown') != true) showAiGuide.value = true
@@ -662,12 +711,33 @@ onShow(async () => {
 	await loadViewerMembership()
 	// 红娘代编返回后重新拉取会员资料，保证主页立即反映刚保存的内容
 	if (detailLoadedOnce && fromMatchmaker.value) await load()
+	// 额度用完态下从会员页返回：上限可能已从 8 提到 20，重新判定一次再加载，
+	// 否则用户刚开通会员回到本页仍停在「今日可查看的新资料已用完」。
+	if (!detailLoadedOnce && detailQuotaExhausted.value && Number(user.value.id) > 0) {
+		const canView = !isOwnProfile.value && !isPreview.value && !fromMatchmaker.value
+		if (canView && recordProfileView(Number(user.value.id))) {
+			detailQuotaExhausted.value = false
+			detailError.value = ''
+			await load()
+			detailLoadedOnce = true
+		}
+	}
 	refreshLockedView()
 })
 
 const onBack = () => { uni.navigateBack({ delta: 1 }) }
 const openQuotaMembership = () => { uni.navigateTo({ url: '/pagesSub/profileExtra/vip' }) }
-const handleDetailErrorAction = () => { if (detailQuotaExhausted.value) openQuotaMembership(); else load() }
+// 额度耗尽分两条路：普通用户去开通会员，VIP 去积分兑换次数。
+// 以前 VIP 用完也被引导"开通会员"，既没有意义也找不到兑换入口。
+const openQuotaExchange = () => { uni.navigateTo({ url: '/pagesSub/profileExtra/my-tasks' }) }
+const handleDetailErrorAction = () => {
+	if (detailQuotaExhausted.value) {
+		if (viewerIsVip.value) openQuotaExchange()
+		else openQuotaMembership()
+		return
+	}
+	load()
+}
 const onShare = () => { uni.showToast({ title: '分享给朋友', icon: 'none' }) }
 const goEdit = () => { uni.navigateTo({ url: '/pagesSub/userExtra/user/edit' }) }
 /* 红娘查看会员主页底部操作栏：编辑资料 / 红娘中心 */
@@ -913,6 +983,7 @@ const onLike = async () => {
 .qa-card { display: flex; flex-direction: column; gap: 12rpx; padding: 24rpx; border-radius: 16rpx; background-color: var(--canvas); }
 .qa-question { color: var(--accent2); font-size: 24rpx; font-weight: 700; }
 .qa-answer { color: var(--ink2); font-size: 24rpx; line-height: 1.6; }
+.qa-question { color: var(--ink); font-size: 26rpx; font-weight: 700; line-height: 1.5; }
 .section-more { color: var(--accent2); font-size: 22rpx; }
 .dynamic-card { display: flex; flex-direction: column; gap: 18rpx; padding: 24rpx; border-radius: 18rpx; background-color: var(--canvas); }
 .dynamic-user-row { display: flex; flex-direction: row; align-items: center; gap: 16rpx; }

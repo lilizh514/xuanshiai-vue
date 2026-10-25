@@ -107,6 +107,7 @@
 					<view class="cert-icon-wrap" :class="{ 'cert-icon-done': cert.passed }"><text class="cert-icon">{{ cert.icon }}</text></view>
 					<view class="cert-copy"><text class="cert-label">{{ cert.label }}</text><text class="cert-description">{{ cert.desc }}</text></view>
 					<view v-if="cert.passed" class="cert-done-pill"><text class="cert-done-text">已认证</text></view>
+					<view v-else-if="cert.reviewing" class="cert-reviewing-pill" @tap="goCertification(cert.key)"><text class="cert-reviewing-text">审核中 ›</text></view>
 					<view v-else class="cert-pending" @tap="goCertification(cert.key)"><text class="cert-pending-text">去认证</text></view>
 				</view>
 			</view>
@@ -147,8 +148,6 @@
 					</view>
 				</view>
 			</view>
-
-			<view class="scroll-bottom-spacer"></view>
 		</scroll-view>
 
 		<view class="sheet-overlay" v-if="detailSheetVisible" @click="detailSheetVisible = false">
@@ -162,7 +161,7 @@
 					<view v-if="editSheetMode == 'basic'">
 					<view class="sheet-row">
 						<text class="sheet-row-label">昵称</text>
-						<input class="sheet-input" :value="formData.nickname" placeholder="请输入昵称" @input="onInput('nickname', $event)" /><text class="sheet-row-arrow">›</text>
+						<input class="sheet-input" :value="formData.nickname" placeholder="请输入昵称" @input="onInput('nickname', $event)" />
 					</view>
 					<view class="sheet-divider"></view>
 					<view class="sheet-row">
@@ -188,12 +187,12 @@
 					<view class="sheet-divider"></view>
 					<view class="sheet-row">
 						<text class="sheet-row-label">现居地</text>
-						<picker class="sheet-row-right" mode="region" @change="onResidenceChange"><text class="sheet-row-value">{{ formData.residenceCityCode || '请选择' }}</text><text class="sheet-row-arrow">›</text></picker>
+						<picker class="sheet-row-right" mode="region" :value="residenceRegionValue" @change="onResidenceChange"><text class="sheet-row-value">{{ formData.residenceCityCode || '请选择' }}</text><text class="sheet-row-arrow">›</text></picker>
 					</view>
 					<view class="sheet-divider"></view>
 					<view class="sheet-row">
 						<text class="sheet-row-label">家乡</text>
-						<picker class="sheet-row-right" mode="region" @change="onHometownChange"><text class="sheet-row-value">{{ formData.hometown || '请选择' }}</text><text class="sheet-row-arrow">›</text></picker>
+						<picker class="sheet-row-right" mode="region" :value="hometownRegionValue" @change="onHometownChange"><text class="sheet-row-value">{{ formData.hometown || '请选择' }}</text><text class="sheet-row-arrow">›</text></picker>
 					</view>
 					<view class="sheet-divider"></view>
 					<view class="sheet-row">
@@ -208,12 +207,16 @@
 					<view class="sheet-divider"></view>
 					<view class="sheet-row">
 						<text class="sheet-row-label">职业</text>
-						<input class="sheet-input" :value="formData.occupation" placeholder="请选择" @input="onInput('occupation', $event)" /><text class="sheet-row-arrow">›</text>
+						<picker class="sheet-row-right" mode="selector" :range="occupationOptions" :value="occupationPickerIndex" @change="onOccupationChange"><text class="sheet-row-value">{{ occupationText == '' ? '请选择' : occupationText }}</text><text class="sheet-row-arrow">›</text></picker>
+					</view>
+					<view v-if="occupationPickerIndex == occupationOptions.length - 1" class="sheet-row sheet-row-sub">
+						<text class="sheet-row-label">职业名称</text>
+						<input class="sheet-input" :value="formData.occupation" placeholder="请填写你的职业" @input="onInput('occupation', $event)" />
 					</view>
 					<view class="sheet-divider"></view>
 					<view class="sheet-row">
 						<text class="sheet-row-label">公司</text>
-						<input class="sheet-input" :value="formData.company" placeholder="搜索公司名称" @input="onCompanyInput" /><text class="sheet-row-arrow">›</text>
+						<input class="sheet-input" :value="formData.company" placeholder="搜索公司名称" @input="onCompanyInput" />
 					</view>
 					<view v-if="companySuggestions.length > 0" class="sheet-suggestion-list"><view v-for="company in companySuggestions" :key="company" class="sheet-suggestion" @tap="chooseCompany(company)"><text>{{ company }}</text></view></view>
 					<view class="sheet-divider"></view>
@@ -229,7 +232,7 @@
 					<view class="sheet-divider"></view>
 					<view class="sheet-row">
 						<text class="sheet-row-label">微信号</text>
-						<input class="sheet-input" :value="formData.wechat" placeholder="仅作为紧急联系" @input="onInput('wechat', $event)" /><text class="sheet-row-arrow">›</text>
+						<input class="sheet-input" :value="formData.wechat" placeholder="仅作为紧急联系" @input="onInput('wechat', $event)" />
 					</view>
 					</view>
 					<view class="sheet-bottom-spacer"></view>
@@ -304,6 +307,7 @@
 	import XsaProfileAiFirstAnalysis from '@/components/XsaProfileAiFirstAnalysis.uvue'
 	import { resolveMediaUrl, CURRENT_USER_ID_KEY } from '@/api/config.uts'
 	import { sleep } from '@/utils/sleep.uts'
+	import { aiFailureNotice } from '@/utils/ai-error.uts'
 	import locationJson from '@/data/location.json'
 
 	const loading = ref(true)
@@ -339,6 +343,8 @@
 	const heightOptions = numericOptions(140, 220)
 	const weightOptions = numericOptions(40, 120)
 	const educationOptions = ['未选择', '高中及以下', '大专', '本科', '硕士', '博士']
+	// 与登录引导页「您从事何种工作」保持同一套枚举，最后一项「其他」允许自由填写。
+	const occupationOptions = ['请选择', '私企员工', '央企/国企', '事业单位/公务员', '外企员工', '自由职业', '创业者/个体', '教师', '医生', '律师', '金融从业', '互联网/IT', '制造业', '服务业', '在校学生', '其他']
 	const maritalOptions = ['未选择', '未婚', '离异', '丧偶']
 	const incomeOptions = ['请选择', '小于10w', '10-20w', '30-50w', '50-100w', '100w以上', '保密']
 	const mbtiOptions = ['未选择', 'INTJ', 'INTP', 'ENTJ', 'ENTP', 'INFJ', 'INFP', 'ENFJ', 'ENFP', 'ISTJ', 'ISFJ', 'ESTJ', 'ESFJ', 'ISTP', 'ISFP', 'ESTP', 'ESFP']
@@ -474,6 +480,34 @@
 		}
 		return ''
 	}
+	/**
+	 * 把已存的省/市/区编码还原成 picker mode="region" 需要的 ["省","市","区"]。
+	 * 不回填的话，微信地区选择器每次都从"北京市/市辖区/东城区"打开，
+	 * 用户一确认就把默认值写回，表现为"现居地每次都变成北京东城"。
+	 */
+	const locationNamesByCodes = (provinceCode: any, cityCode: any, districtCode: any): string[] => {
+		const p = textValue(provinceCode)
+		const c = textValue(cityCode)
+		const d = textValue(districtCode)
+		if (p == '') return []
+		const raw = Array.isArray(locationJson) ? locationJson as any[] : []
+		for (const province of raw) {
+			if ('' + province.code != p) continue
+			const cities = Array.isArray(province.city) ? province.city as any[] : []
+			for (const city of cities) {
+				if ('' + city.code != c) continue
+				const areas = Array.isArray(city.area) ? city.area as any[] : []
+				for (const area of areas) {
+					if ('' + area.code == d) return ['' + province.name, '' + city.name, '' + area.name]
+				}
+				return ['' + province.name, '' + city.name, '']
+			}
+			return ['' + province.name, '', '']
+		}
+		return []
+	}
+	const residenceRegionValue = computed(() => locationNamesByCodes(formData.value.residenceProvinceCode, formData.value.residenceApiCityCode, formData.value.residenceDistrictCode))
+	const hometownRegionValue = computed(() => locationNamesByCodes(formData.value.hometownProvinceCode, formData.value.hometownCityCode, formData.value.hometownDistrictCode))
 
 	const applyProfile = (raw: any) => {
 		const data = raw != null ? raw : {}
@@ -692,11 +726,8 @@
 				// GET 失败保留旧结果，但必须把失败提示带到结果卡上，便于重试。
 				// 503 = 服务端 AI 能力未开启（AI_ENABLED=false / 未配 Key），
 				// 这不是网络故障也不是资料问题，不能引导用户反复重试。
-				if (res != null && Number(res.code) == 503) {
-					aiError.value = 'AI 用心度评审当前暂未开放，资料本身不受影响'
-				} else {
-					aiError.value = res.message != null ? '' + res.message : 'AI 用心度评审暂时不可用'
-				}
+				const notice = aiFailureNotice(res, 'AI 用心度评审')
+				aiError.value = notice.disabled ? notice.title + '，资料本身不受影响' : notice.title + ' · ' + notice.hint
 			}
 		} catch (e) {
 			aiError.value = '网络异常，AI 用心度评审暂时不可用'
@@ -715,13 +746,10 @@
 			await sleep(80)
 			const res = await analyzeProfileThoughtfulness(trigger, editedKeys)
 			if (!res.success || res.data == null) {
-				// H8：503 表示服务端 AI 能力未开启，与网络失败要分开说，
-				// 否则用户会把「AI 评审没开」误读成「资料没保存」。
-				if (res != null && Number(res.code) == 503) {
-					aiError.value = 'AI 用心度评审当前暂未开放，资料已正常保存'
-					return false
-				}
-				aiError.value = res.message != null ? '' + res.message : 'AI 用心度分析失败，请稍后再试'
+				// 按 businessCode 分诊：功能未开放 / 暂时不可用 / 网络超时，
+				// 不要把后端「AI返回格式无效」这类措辞直接抛给用户。
+				const notice = aiFailureNotice(res, 'AI 用心度评审')
+				aiError.value = notice.disabled ? notice.title + '，资料已正常保存' : notice.title + ' · ' + notice.hint
 				return false
 			}
 			aiResult.value = res.data as ThoughtfulnessResult
@@ -847,8 +875,15 @@
 				const certificationsRes = await getUserCertifications()
 				if (certificationsRes.success && certificationsRes.data != null) {
 					if (certificationsRes.data.education != null) {
-						const status = Number(certificationsRes.data.education.status)
-						educationStatus.value = status == 2 ? 'passed' : (status == 1 ? 'reviewing' : (status == 3 ? 'rejected' : 'missing'))
+						const educationItem: any = certificationsRes.data.education
+						const status = Number(educationItem.status)
+						// status==1 但没有任何材料凭据 = 从未真正提交，按"未认证"处理，
+						// 否则会卡在"审核中"且无法重新提交。
+						const educationHasMaterial = educationItem.material_submitted == true
+							|| (educationItem.material != null && textValue(educationItem.material).trim() != '')
+						educationStatus.value = status == 2
+							? 'passed'
+							: (status == 1 ? (educationHasMaterial ? 'reviewing' : 'missing') : (status == 3 ? 'rejected' : 'missing'))
 					}
 					if (certificationsRes.data.single_pledge != null) {
 						const status = Number(certificationsRes.data.single_pledge.status)
@@ -936,6 +971,16 @@
 		const index = mbtiOptions.indexOf(textValue(formData.value.mbti))
 		return index >= 0 ? index : 0
 	})
+	// 职业：枚举内命中则回显该项；不在枚举里的历史值（早期自由填写）归到「其他」，
+	// 由下方的「职业名称」输入框继续编辑，避免打开选择器就把旧值抹掉。
+	const occupationText = computed(() => textValue(formData.value.occupation))
+	const occupationPickerIndex = computed(() => {
+		const current = occupationText.value
+		if (current == '') return 0
+		const index = occupationOptions.indexOf(current)
+		if (index > 0) return index
+		return occupationOptions.length - 1
+	})
 	const agePreview = computed(() => {
 		const birthday = textValue(formData.value.birthday)
 		if (birthday.length < 4) return '未填写'
@@ -982,11 +1027,13 @@
 		if (realNameStatus.value == 'revoked') return '实名认证已撤销，请重新认证'
 		return '需通过平台实名认证'
 	})
+	// reviewing 单独成态：以前只区分 passed / 未通过，导致"审核中"也显示"去认证"，
+	// 点进认证页又是"资料已提交，正在审核"且没有表单，用户会判定为"点不开"。
 	const certifications = computed(() => [
-		{ key: 'realname', label: '实名认证', icon: '盾', passed: realNameStatus.value == 'passed', desc: realNameDescription.value },
-		{ key: 'education', label: '学历认证', icon: '学', passed: educationStatus.value == 'passed', desc: educationStatus.value == 'passed' ? '学历信息已核验' : '需核验学历信息' },
-		{ key: 'avatar', label: '头像认证', icon: '像', passed: avatarCertificationPassed.value, desc: avatarCertificationPassed.value ? '头像为本人真实照片' : '上传真实本人照片' },
-		{ key: 'single_pledge', label: '单身承诺', icon: '誓', passed: singlePledgeStatus.value == 'passed', desc: singlePledgeStatus.value == 'passed' ? '手写承诺已审核通过' : (singlePledgeStatus.value == 'reviewing' ? '手写承诺审核中' : (singlePledgeStatus.value == 'rejected' ? '审核未通过，可重新签署' : '手写签署当前单身状态承诺')) }
+		{ key: 'realname', label: '实名认证', icon: '盾', passed: realNameStatus.value == 'passed', reviewing: realNameStatus.value == 'reviewing', desc: realNameDescription.value },
+		{ key: 'education', label: '学历认证', icon: '学', passed: educationStatus.value == 'passed', reviewing: educationStatus.value == 'reviewing', desc: educationStatus.value == 'passed' ? '学历信息已核验' : (educationStatus.value == 'reviewing' ? '学历材料审核中' : '需核验学历信息') },
+		{ key: 'avatar', label: '头像认证', icon: '像', passed: avatarCertificationPassed.value, reviewing: false, desc: avatarCertificationPassed.value ? '头像为本人真实照片' : '上传真实本人照片' },
+		{ key: 'single_pledge', label: '单身承诺', icon: '誓', passed: singlePledgeStatus.value == 'passed', reviewing: singlePledgeStatus.value == 'reviewing', desc: singlePledgeStatus.value == 'passed' ? '手写承诺已审核通过' : (singlePledgeStatus.value == 'reviewing' ? '手写承诺审核中' : (singlePledgeStatus.value == 'rejected' ? '审核未通过，可重新签署' : '手写签署当前单身状态承诺')) }
 	])
 
 	onMounted(() => {
@@ -1043,6 +1090,16 @@
 	const onIncomeChange = (event: any) => {
 		const index = Number(event.detail.value)
 		formData.value.income = index > 0 ? incomeOptions[index] : ''
+	}
+	const onOccupationChange = (event: any) => {
+		const index = Number(event.detail.value)
+		if (index <= 0) {
+			formData.value.occupation = ''
+			return
+		}
+		const picked = occupationOptions[index]
+		// 选「其他」时清空，交给下方自定义输入框填写
+		formData.value.occupation = picked == '其他' ? '' : picked
 	}
 	const onMbtiChange = (event: any) => {
 		const index = Number(event.detail.value)
@@ -1249,10 +1306,10 @@
 			chooseAvatar()
 			return
 		}
-		if (key == 'single_pledge') {
-			singlePledgeVisible.value = true
-			return
-		}
+		// 单身承诺书走 certification 页的手写签名流程（certification.uvue 已实现
+		// single_pledge 步骤，并在未实名时给出「请先完成实名认证」门槛）。
+		// 这里不要再拦成本地弹层——旧分支引用了从未声明的 singlePledgeVisible，
+		// 点击会直接抛错、表现为「点去认证无响应」。
 		uni.navigateTo({ url: '/pagesSub/profileExtra/certification?type=' + key })
 	}
 	const reviewIntroPolish = async () => {
@@ -1611,6 +1668,8 @@
 .cert-description { font-size: 11px; color: var(--muted); }
 .cert-done-pill { flex-shrink: 0; padding: 5px 12px; border-radius: 12px; background: var(--sage-soft); }
 .cert-done-text { font-size: 12px; color: var(--sage); font-weight: 600; }
+.cert-reviewing-pill { flex-shrink: 0; padding: 5px 12px; border-radius: 12px; background: var(--warm); border: 1px solid var(--line); }
+.cert-reviewing-text { font-size: 12px; color: var(--muted); font-weight: 600; }
 .cert-pending-text { font-size: 12px; color: var(--sage); font-weight: 600; }
 
 /* Intro */
@@ -1636,16 +1695,17 @@
 .qa-hint { font-size: 12px; color: var(--muted); }
 .qa-answer-text { flex: 1; font-size: 12px; color: var(--ink2); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
 .qa-edit-icon { font-size: 13px; color: var(--sage); margin-left: 6px; flex-shrink: 0; }
-.qa-sheet-body { padding: 4px 20px 0 20px; display: flex; flex-direction: column; gap: 10px; }
+.qa-sheet-body { flex: 1; min-height: 0; padding: 4px 20px 0 20px; display: flex; flex-direction: column; gap: 10px; }
 .qa-sheet-question { font-size: 15px; font-weight: 600; color: var(--ink); line-height: 1.5; }
-.qa-sheet-textarea { width: 100%; height: 140px; padding: 12px; border-radius: 12px; background: var(--warm); font-size: 14px; color: var(--ink); line-height: 1.6; box-sizing: border-box; }
+.qa-sheet-textarea { width: 100%; flex: 1; min-height: 140px; height: auto; padding: 12px; border-radius: 12px; background: var(--warm); font-size: 14px; color: var(--ink); line-height: 1.6; box-sizing: border-box; }
 .qa-sheet-count { font-size: 12px; color: var(--muted); text-align: right; }
 
 /* Bottom bar */
 .cancel-button { flex: 1; height: 48px; border-radius: 24px; display: flex; align-items: center; justify-content: center; background: var(--warm); color: var(--ink2); font-size: 15px; font-weight: 600; }
 .save-button { flex: 1; height: 48px; border-radius: 24px; display: flex; align-items: center; justify-content: center; background: var(--sage); color: var(--text-invert); font-size: 15px; font-weight: 700; box-shadow: 0 4px 12px rgba(51,141,107,0.25); }
 .save-button.disabled { opacity: 0.55; }
-.scroll-bottom-spacer { height: calc(100vh - 312px); min-height: 120px; }
+/* 旧版用 calc(100vh - 312px) 的空占位块把页面往下顶出近整屏空白，
+   底部避让统一交给 .scroll-content 的 padding-bottom 处理。 */
 
 /* Sheet overlay */
 .sheet-overlay { position: fixed; left: 0; right: 0; top: 0; bottom: 0; width: 100%; height: 100vh; background: rgba(12,19,19,0.36); z-index: 100; display: flex; align-items: flex-end; }
@@ -1656,6 +1716,9 @@
 .sheet-close { position: absolute; right: 18px; top: 50%; transform: translateY(-50%); font-size: 20px; color: var(--muted); padding: 4px; }
 .sheet-body { flex: 1; padding: 0 18px 24px; }
 .sheet-row { display: flex; flex-direction: row; align-items: center; justify-content: space-between; padding: 14px 6px; }
+/* 「职业=其他」时出现的补充输入行：缩进 + 去掉上分隔，避免看成两个独立字段 */
+.sheet-row-sub { padding: 4px 6px 14px 6px; }
+.sheet-row-sub .sheet-row-label { font-size: 13px; color: var(--muted); }
 .sheet-row-label { font-size: 14px; color: var(--ink); flex-shrink: 0; }
 .sheet-row-right { display: flex; flex-direction: row; align-items: center; gap: 6px; }
 .sheet-row-value { font-size: 14px; color: var(--muted); }

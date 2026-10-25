@@ -143,6 +143,8 @@ const purchasePackages: PurchasePackage[] = [
 	{ points: 5000, pointsText: '5,000', price: 268 }
 ]
 const exchangeItems: ExchangeItem[] = [
+	// 额度用尽时详情页会引导到这里兑换"查看次数"，缺这一项会让入口落空
+	{ key: 'profile_view', name: '查看资料次数', cost: 30 },
 	{ key: 'apply', name: '申请认识次数', cost: 50 },
 	{ key: 'plane_catch', name: '捡纸飞机次数', cost: 50 },
 	{ key: 'plane_throw', name: '扔纸飞机次数', cost: 50 }

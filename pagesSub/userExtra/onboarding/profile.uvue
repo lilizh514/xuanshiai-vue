@@ -6,7 +6,29 @@
 			<view class="topbar-space"></view>
 		</view>
 
-		<view v-if="step === 0" class="identity-page">
+		<!-- 资料保存后的收尾页：AI 画像是选填入口，不阻塞注册 -->
+		<view v-if="finished" class="finish-page">
+			<view class="finish-copy">
+				<text class="hero-title">资料填好了</text>
+				<text class="hero-subtitle">接下来让知遇和你聊几句，把你说过的话整理成一份画像，再帮你写成自我介绍和 3 个问答，直接填进资料里。</text>
+			</view>
+			<view class="finish-card">
+				<text class="finish-card-title">关于知遇</text>
+				<text class="finish-card-line">只在你同意后开始，授权随时可以撤回</text>
+				<text class="finish-card-line">聊得越具体，整理出来的内容越像你自己</text>
+				<text class="finish-card-line">生成的内容不会自动公开，需要你逐项确认才会写入</text>
+			</view>
+			<view class="finish-actions">
+				<button v-if="aiEntryAvailable" class="finish-primary" :disabled="aiEntryBusy" @click="openAiPortrait">{{ aiEntryBusy ? '正在进入…' : '让知遇认识我，生成 AI 画像' }}</button>
+				<view v-else class="finish-primary finish-primary-disabled">
+					<text class="finish-primary-text">{{ aiEntryChecked ? 'AI 画像正在准备中' : '正在检查 AI 画像…' }}</text>
+					<text class="finish-primary-sub">可以先逛逛，稍后从「我的 - 知遇」进入</text>
+				</view>
+				<button class="finish-secondary" @click="goHomeAfterOnboarding">先去逛逛</button>
+			</view>
+		</view>
+
+		<view v-else-if="step === 0" class="identity-page">
 			<view class="hero-copy">
 				<text class="hero-title">欢迎加入<text class="hero-emphasis">宣誓爱</text></text>
 				<text class="hero-subtitle">请选择您要注册的身份</text>
@@ -97,10 +119,18 @@
 	import locationJson from '@/data/location.json'
 	import { updateOwnProfile } from '@/api/user.uts'
 	import { getProfileCompletion } from '@/api/auth.uts'
+	import { getContinuousMoxiangState } from '@/api/ai-moxiang.uts'
 
 	const step = ref(0)
 	const mode = ref('')
 	const selections = ref([] as string[])
+	// 资料保存成功后的收尾页：AI 画像是「选填入口」，不是注册链路的必经一步。
+	// 不用新增页面，避免改动 pages.json（受保护文件）。
+	const finished = ref(false)
+	const aiEntryBusy = ref(false)
+	// 画像能力是否可用：只由一次只读探测决定，读不到不弹错，只把入口降级。
+	const aiEntryAvailable = ref(true)
+	const aiEntryChecked = ref(false)
 
 	const roles = [
 		{ key: 'self', title: '自己找对象', subtitle: '我单身，我自己找对象', icon: '♡', tone: 'role-peach', iconTone: 'icon-peach' },
@@ -246,15 +276,23 @@
 			return ''
 		})
 		selections.value[6] = '大专'
+		// 性别默认值会取 options[0]="男"。注册页已经让用户选过性别，这里必须尊重草稿，
+		// 否则"注册选女 → 编辑资料显示男"（服务端还会因为实名后不可改而彻底定死）。
+		try {
+			const pendingGender = Number(uni.getStorageSync('xsa_pending_gender'))
+			const genderQuestion: any = questions[0]
+			if (pendingGender == 1 || pendingGender == 2) {
+				if (genderQuestion != null && genderQuestion.type === 'picker' && genderQuestion.options.length >= pendingGender) {
+					selections.value[0] = genderQuestion.options[pendingGender - 1]
+				}
+			}
+		} catch (e) {}
 		heightTouched.value = false
 		weightTouched.value = false
 		applyBodyDefaults(selections.value[0])
-		if (locationLabel.value != '') {
-			selections.value[2] = locationLabel.value
-			selections.value[3] = locationLabel.value
-			const initialCodes = selectedLocationCodes([0, 0, 0])
-			locationCodesByQuestion.value = [initialCodes, initialCodes]
-		}
+		// 不再把默认下标 [0,0,0] 写进答案：它对应数据文件首条"北京市 市辖区 东城区"，
+		// 导致用户没选地区也会被落库成北京东城（编辑页读出来"每次都是东城区"）。
+		// 这里保持未选择，等用户主动打开选择器后再写入编码。
 		step.value = 1
 	}
 
@@ -398,10 +436,47 @@
 		uni.setStorageSync('xsa_onboarding_completed', true)
 		uni.setStorageSync('xsa_onboarding_mode', mode.value)
 		uni.setStorageSync('xsa_skip_welcome_once', true)
-		uni.showToast({ title: '资料已保存', icon: 'success' })
-		setTimeout(() => {
-			uni.switchTab({ url: '/pages/index/index' })
-		}, 500)
+		// 不再直接跳首页：先给一个 AI 画像入口，由用户决定现在生成还是稍后再说。
+		finished.value = true
+		probeAiPortraitEntry()
+	}
+
+	/**
+	 * 进收尾页时做一次只读探测，决定 AI 画像入口是否可用。
+	 * 服务端明确关闭能力（AI_FEATURE_DISABLED）才降级入口；网络抖动保留入口，
+	 * 避免把「一次请求失败」误报成「功能没有」。
+	 */
+	const probeAiPortraitEntry = () => {
+		if (aiEntryChecked.value) return
+		aiEntryChecked.value = true
+		getContinuousMoxiangState().then(() => {
+			aiEntryAvailable.value = true
+		}).catch((error: any) => {
+			const businessCode = error != null && error.businessCode != null ? '' + error.businessCode : ''
+			aiEntryAvailable.value = businessCode != 'AI_FEATURE_DISABLED'
+		})
+	}
+
+	const goHomeAfterOnboarding = () => {
+		uni.setStorageSync('xsa_skip_welcome_once', true)
+		uni.switchTab({ url: '/pages/index/index' })
+	}
+
+	const openAiPortrait = () => {
+		if (aiEntryBusy.value) return
+		if (!aiEntryAvailable.value) {
+			uni.showToast({ title: '知遇还在准备中，你可以先逛逛', icon: 'none' })
+			return
+		}
+		aiEntryBusy.value = true
+		// redirectTo：返回键不能退回已经填完的资料页。
+		uni.redirectTo({
+			url: '/pagesSub/profileExtra/my-portrait-master',
+			fail: () => {
+				aiEntryBusy.value = false
+				uni.showToast({ title: '页面打开失败，可以先逛逛', icon: 'none' })
+			}
+		})
 	}
 
 	const handleBack = async () => {
@@ -475,6 +550,100 @@
 		min-height: calc(100vh - 100px);
 		padding: 0 0 104px;
 		box-sizing: border-box;
+	}
+
+	/* 收尾页：沿用本页渐变底与既有 token，不引入新色值。 */
+	.finish-page {
+		min-height: calc(100vh - 100px);
+		padding: 56px 32px calc(32px + env(safe-area-inset-bottom));
+		box-sizing: border-box;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.finish-copy {
+		text-align: center;
+	}
+
+	.finish-card {
+		margin-top: 36px;
+		padding: 20px 20px 16px;
+		border-radius: 18px;
+		background: var(--surface);
+		border: 1px solid var(--line);
+		display: flex;
+		flex-direction: column;
+	}
+
+	.finish-card-title {
+		font-size: 15px;
+		font-weight: 700;
+		color: var(--ink);
+		margin-bottom: 10px;
+	}
+
+	.finish-card-line {
+		font-size: 13px;
+		color: var(--muted);
+		line-height: 1.9;
+	}
+
+	.finish-actions {
+		margin-top: auto;
+		padding-top: 36px;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.finish-primary {
+		width: 100%;
+		min-height: 52px;
+		padding: 14px 20px;
+		border-radius: 999px;
+		background: var(--accent);
+		color: var(--text-invert);
+		font-size: 16px;
+		font-weight: 800;
+		line-height: 22px;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		box-sizing: border-box;
+	}
+
+	.finish-primary[disabled] {
+		opacity: 0.6;
+	}
+
+	.finish-primary-disabled {
+		background: var(--soft);
+	}
+
+	.finish-primary-disabled .finish-primary-text {
+		color: var(--muted);
+	}
+
+	.finish-primary-text {
+		font-size: 16px;
+		font-weight: 800;
+		color: var(--text-invert);
+	}
+
+	.finish-primary-sub {
+		margin-top: 2px;
+		font-size: 12px;
+		color: var(--muted);
+	}
+
+	.finish-secondary {
+		width: 100%;
+		height: 46px;
+		margin-top: 10px;
+		background: transparent;
+		color: var(--muted);
+		font-size: 14px;
+		line-height: 46px;
 	}
 
 	.identity-page { padding: 48px 36px 24px; }
@@ -664,14 +833,22 @@
 	}
 
 	.picker-column-item {
-		height: 52px;
+		height: 44px;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		background: transparent;
-		font-size: 24px;
-		font-weight: 800;
+		/* 三列等分后每列约 1/3 屏宽，"宁夏回族自治区""香港特别行政区"这类 7-8 字
+		   在 24px 字号下必然折行，而 52px 行高装不下两行 → 上下行文字互相压叠。
+		   这里降到 16px、行高改 44px，并强制单行省略，长名不再溢出。 */
+		font-size: 16px;
+		font-weight: 600;
 		color: var(--ink);
+		padding: 0 6px;
+		box-sizing: border-box;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 
 	.picker-selected-text {

@@ -195,17 +195,24 @@
 				<scroll-view scroll-y class="mpr-card-scroll" enhanced :show-scrollbar="false">
 					<view class="mpr-card-content">
 						<text class="mpr-card-copy">确认画像只代表本人确认，不会自动公开。点击“确认采用”才会写入公开资料；未选择字段不写入。实际可见对象仍受现有隐私设置约束，这里不会扩大可见范围。</text>
-						<text class="mpr-card-copy mpr-card-boundary">这里不会修改长期择偶标准、发送消息或公开访谈原文。</text>
+						<text class="mpr-card-copy mpr-card-boundary">这里不会修改长期择偶标准、发送消息或公开访谈原文。关于我问答写入的是资料页的公开问答，已答过的题保留原答案。</text>
 						<text v-if="profileCardSelfIntroKept" class="mpr-card-copy mpr-card-boundary">提示：你选择保留原有自我介绍，本次不会写入新内容，因此暂时无法生成海报。想用新介绍请点上面的「点此改为替换」。</text>
 						<view v-if="profileCardLoading" class="mpr-card-state"><text>{{ profileCardWaitCopy != '' ? profileCardWaitCopy : '正在整理公开介绍…' }}</text></view>
 						<view v-else-if="profileCardError != ''" class="mpr-card-state"><text>{{ profileCardError }}</text><view class="mpr-btn" @tap="onPrepareProfileCard"><text class="mpr-btn-text">重新整理</text></view></view>
 						<view v-else>
 							<text v-if="profileCardApplyMessage != ''" class="mpr-card-limit">{{ profileCardApplyMessage }}</text>
 								<view v-for="row in profileCardRows" :key="row.key" class="mpr-card-row">
-									<view class="mpr-card-row-copy"><text class="mpr-card-row-label">{{ row.label }}</text></view><text class="mpr-card-row-toggle" @tap="toggleProfileCardField(row.key)">{{ row.selected ? '采用' : '跳过' }}</text>
+									<view class="mpr-card-row-copy"><text class="mpr-card-row-label">{{ row.label }}</text></view>
+									<text v-if="row.locked" class="mpr-card-row-locked">已有回答</text>
+									<text v-else class="mpr-card-row-toggle" @tap="toggleProfileCardField(row.key)">{{ row.selected ? '采用' : '跳过' }}</text>
 									<template v-if="row.key == 'self_intro'">
 										<textarea v-model="row.value" class="mpr-card-editor" maxlength="500" :disabled="profileCardApplying || profileCardApplyPayload != null" />
 										<view v-if="row.selected" class="mpr-card-replace" @tap="toggleReplaceExistingSelfIntro"><text>你已有自我介绍</text><text class="mpr-card-replace-value">{{ replaceExistingSelfIntro ? '✓ 用新的替换' : '保留原来的（点此改为替换）' }}</text></view>
+									</template>
+									<template v-else-if="row.isQa">
+										<textarea v-model="row.value" class="mpr-card-editor" maxlength="300" :disabled="row.locked || profileCardApplying || profileCardApplyPayload != null" />
+										<text v-if="row.locked" class="mpr-card-limit">这题你已经有回答，本次不会覆盖；想改写请到「编辑资料」手动修改。</text>
+										<text v-else class="mpr-card-limit">{{ row.value.length }}/300，可以直接改，写进去的是你确认过的这段</text>
 									</template>
 									<view v-else class="mpr-card-tags"><text class="mpr-card-limit">{{ profileCardTagLimitText }}</text><view v-for="tag in row.tags" :key="tag" class="mpr-card-tag" :class="{ 'mpr-card-tag-selected': profileCardSelectedTags.indexOf(tag) >= 0 }" @tap="toggleProfileCardTag(tag)"><text>{{ tag }}</text></view></view>
 								</view>
@@ -235,6 +242,16 @@
 	const menuButtonInfo = uni.getMenuButtonBoundingClientRect()
 	const navPadTop = menuButtonInfo != null && menuButtonInfo.top > statusBarHeight ? menuButtonInfo.top : statusBarHeight + 6
 	const menuButtonSpacing = menuButtonInfo != null ? (systemInfo.windowWidth - menuButtonInfo.left) : 8
+	// 与后端 QA_QUESTION_TEXTS（app/schemas/auth.py）逐字一致：
+	// question_id 1/2/3 是资料卡「关于我」三道固定题，写回时按 id 合并。
+	// 注意：必须放在 MAX_PROFILE_CARD_ADOPT_TAGS 之前——test-profile-card-tag-consistency
+	// 依赖「预算常量以无花括号声明行开头」的源码布局做配平切片。
+	const PROFILE_QA_LABELS: any = {
+		1: '你理想中的另一半是什么样的',
+		2: '喜欢什么运动',
+		3: '你期待的爱情是什么样子的'
+	}
+	const PROFILE_QA_MAX_LENGTH = 300
 	// 采用标签预算：后端 merge 写入按「已有标签 + 本次采用 <= 10」做最终校验，
 	// 前端用同一口径预先限制可选数量，避免用户只撞到通用校验报错。
 	// existing < 0 表示还没读到已有标签数，退回旧的 3 个上限，由后端兜底。
@@ -309,6 +326,9 @@
 				profileCardExistingTagCount: -1,
 				// 用户是否已有自我介绍：决定「保留/替换」是否会影响能否生成海报。
 				profileCardHasExistingSelfIntro: false,
+				// 已有回答的问答序号：后端 apply 对 qa_1/qa_3 已有答案直接跳过，
+				// 只有第 2 题（运动）会覆盖，这里用来在 UI 上如实标记「不会覆盖」。
+				profileCardExistingQaIds: [] as number[],
 				profileCardTagApplyMode: '',
 				replaceExistingSelfIntro: false,
 				profileCardRows: [] as any[],
@@ -782,9 +802,24 @@
 							this.profileCardInterestTagsAbsent = value == ''
 						}
 						if (value == '') return
-						rows.push({ key: key, label: label, value: value, selected: true, questionId: questionId, tags: candidates.map((item: any): string => String(item).trim()).filter((item: string): boolean => item != '') })
+						// 问答：后端 apply 对已有答案的 qa_1/qa_3 直接跳过，只有第 2 题会覆盖；
+						// 这里按同一口径标 locked，避免用户以为新旧答案都会写进去。
+						const locked = questionId > 0 && questionId != 2 && this.profileCardExistingQaIds.indexOf(questionId) >= 0
+						rows.push({
+							key: key,
+							label: label,
+							value: value,
+							selected: !locked,
+							locked: locked,
+							isQa: questionId > 0,
+							questionId: questionId,
+							tags: candidates.map((item: any): string => String(item).trim()).filter((item: string): boolean => item != '')
+						})
 					}
 					add('self_intro', '自我介绍')
+					add('qa_1_partner', PROFILE_QA_LABELS[1], 1)
+					add('qa_2_sports_candidates', PROFILE_QA_LABELS[2], 2)
+					add('qa_3_love', PROFILE_QA_LABELS[3], 3)
 					add('interest_tag_candidates', '兴趣标签')
 					return rows
 				},
@@ -803,6 +838,7 @@
 			async refreshProfileCardTagBudget() {
 				this.profileCardExistingTagCount = -1
 				this.profileCardHasExistingSelfIntro = false
+				this.profileCardExistingQaIds = []
 				try {
 					const res = await getOwnProfile()
 					if (!this.pageAlive) return
@@ -812,6 +848,16 @@
 					// 已有自我介绍时后端默认跳过 self_intro；不提前说明，用户会在
 					// 采用成功之后才发现海报打不开。
 					this.profileCardHasExistingSelfIntro = String(profile.self_intro ?? '').trim() != ''
+					// 已答过的题：后端只覆盖第 2 题，其余保留旧答案，必须提前标记。
+					const existingQa: any[] = Array.isArray(profile.qa_answers) ? profile.qa_answers as any[] : []
+					const ids: number[] = []
+					for (let index = 0; index < existingQa.length; index++) {
+						const item: any = existingQa[index]
+						if (item == null) continue
+						const qid = Number(item.question_id != null ? item.question_id : 0)
+						if (qid > 0 && String(item.answer ?? '').trim() != '') ids.push(qid)
+					}
+					this.profileCardExistingQaIds = ids
 				} catch (e) {
 					this.profileCardExistingTagCount = -1
 				}
@@ -1103,11 +1149,22 @@
 					}
 					const accepted: any = {}
 					const personalTags: string[] = []
+					const qaAnswers: any[] = []
 					const rejected: string[] = []
 					for (let index = 0; index < this.profileCardRows.length; index++) {
 						const row = this.profileCardRows[index]
 						if (row.selected != true) { rejected.push(row.key); continue }
 						if (row.key == 'self_intro') accepted.self_intro = row.value
+						else if (row.isQa == true && Number(row.questionId) > 0) {
+							// 后端 ProfileQaAnswer：question_id 只能 1/2/3，answer ≤300，空串即不写。
+							const answer = String(row.value ?? '').trim()
+							if (answer == '') { rejected.push(row.key); continue }
+							qaAnswers.push({
+								question_id: Number(row.questionId),
+								question: String(row.label ?? ''),
+								answer: answer.length > PROFILE_QA_MAX_LENGTH ? answer.slice(0, PROFILE_QA_MAX_LENGTH) : answer
+							})
+						}
 						else if (row.key == 'interest_tag_candidates') {
 							if (this.profileCardSelectedTags.length > profileCardTagBudget(this.profileCardExistingTagCount)) {
 								uni.showToast({ title: this.profileCardTagLimitText, icon: 'none' })
@@ -1116,6 +1173,7 @@
 							for (let tagIndex = 0; tagIndex < this.profileCardSelectedTags.length; tagIndex++) personalTags.push(this.profileCardSelectedTags[tagIndex])
 						}
 					}
+					if (qaAnswers.length > 0) accepted.qa_answers = qaAnswers
 					if (personalTags.length > 0) accepted.personal_tags = personalTags
 					// 快照与表单数组分离：响应丢失后的同键重试必须保持原 body 摘要。
 					this.profileCardApplyPayload = { expected_revision: this.profileCardExpectedRevision, accepted: accepted, rejected: rejected, replace_existing: { self_intro: this.replaceExistingSelfIntro } }
@@ -1158,6 +1216,20 @@
 							for (let index = 0; index < written.length; index++) {
 								const key = String(written[index])
 								if (key == 'self_intro' && String(profile.self_intro ?? '').trim() == '') readBackIssue = '自我介绍尚未核对到'
+								if (key.indexOf('qa_') == 0) {
+									// 后端回执里的问答键形如 qa_1 / qa_2 / qa_3，按 question_id 回读核对。
+									const qid = Number(key.slice(3))
+									const serverQa: any[] = Array.isArray(profile.qa_answers) ? profile.qa_answers as any[] : []
+									let qaFound = false
+									for (let qaIndex = 0; qaIndex < serverQa.length; qaIndex++) {
+										const item: any = serverQa[qaIndex]
+										if (item != null && Number(item.question_id) == qid && String(item.answer ?? '').trim() != '') {
+											qaFound = true
+											break
+										}
+									}
+									if (!qaFound) readBackIssue = '第 ' + qid + ' 题回答尚未核对到'
+								}
 								if (key == 'personal_tags') {
 									const serverTags = Array.isArray(profile.personal_tags) ? (profile.personal_tags as any[]).map((t: any): string => String(t)) : []
 									for (let tagIndex = 0; tagIndex < this.profileCardSubmittedTags.length; tagIndex++) {
@@ -1705,6 +1777,7 @@
 	.mpr-card-row-copy { flex: 1; display: flex; flex-direction: column; gap: 4px; }
 	.mpr-card-row-label { color: var(--ink); font-size: 14px; font-weight: 700; }
 	.mpr-card-row-toggle { min-height: 44px; display: flex; align-items: center; color: var(--primary); font-size: 13px; font-weight: 700; }
+	.mpr-card-row-locked { min-height: 44px; display: flex; align-items: center; color: var(--muted); font-size: 12px; }
 	.mpr-card-editor { width: 100%; min-height: 100px; padding: 8px; box-sizing: border-box; border-radius: 8px; background: var(--surface-warm); color: var(--ink2); font-size: 14px; line-height: 1.6; }
 	.mpr-card-tags { width: 100%; display: flex; flex-wrap: wrap; gap: 8px; }
 	.mpr-card-tag { min-height: 44px; box-sizing: border-box; display: flex; align-items: center; padding: 6px 10px; border-radius: 12px; background: var(--surface-warm); color: var(--ink2); font-size: 13px; }

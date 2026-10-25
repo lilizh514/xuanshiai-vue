@@ -59,6 +59,18 @@ export function setAuthTokens(accessToken: string, refreshToken: string = '') {
 }
 
 export function clearAuthTokens() {
+  // 纸飞机身份/积分额度是按账号存的，退出登录必须一并清理，
+  // 否则切换账号后会串出上一个账号的昵称、头像与"剩余次数"。
+  try {
+    const uid = uni.getStorageSync(CURRENT_USER_ID_KEY)
+    if (uid != null && '' + uid != '') {
+      uni.removeStorageSync('xsa_paper_plane_profile_v1:' + uid)
+    }
+  } catch (e) {}
+  try {
+    uni.removeStorageSync('xsa_paper_plane_profile_v1')
+    uni.removeStorageSync('xsa_paper_plane_state_v1')
+  } catch (e) {}
   try {
     uni.removeStorageSync(ACCESS_TOKEN_KEY)
   } catch (e) {}

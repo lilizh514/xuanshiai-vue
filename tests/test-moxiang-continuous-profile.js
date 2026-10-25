@@ -10,7 +10,7 @@ const file = fs.readFileSync(path.join(__dirname, '../pages/profile/profile.uvue
 const parsed = parse(file)
 assert.equal(parsed.errors.length, 0)
 const source = parsed.descriptor.scriptSetup.content
-const names = ['portraitTag', 'portraitDesc', 'portraitState', 'portraitSnapshot', 'portraitReadSeq', 'portraitPageVisible', 'portraitHasResult', 'portraitStateLoading', 'portraitStateError', 'aiPersonaTitle', 'aiPersonaTags', 'aiAttachmentStyle', 'clearPortraitBadge', 'applyPortraitStateCopy', 'loadPortraitState', 'loadPortraitNarrative', 'openPortraitDestination', 'onAiPortrait', 'hidePortraitState']
+const names = ['portraitTag', 'portraitDesc', 'portraitState', 'portraitSnapshot', 'portraitReadSeq', 'portraitPageVisible', 'portraitHasResult', 'portraitStateLoading', 'portraitStateError', 'portraitUnavailable', 'lastPortraitFailedAt', 'PORTRAIT_RETRY_COOLDOWN_MS', 'aiPersonaTitle', 'aiPersonaTags', 'aiAttachmentStyle', 'clearPortraitBadge', 'applyPortraitStateCopy', 'loadPortraitState', 'loadPortraitNarrative', 'openPortraitDestination', 'onAiPortrait', 'hidePortraitState']
 const nodes = parser.parse(source, { sourceType: 'module', plugins: ['typescript'] }).program.body
 const code = names.map(name => {
   const node = nodes.find(n => n.type === 'VariableDeclaration' && n.declarations.some(d => d.id.name === name))
@@ -25,6 +25,9 @@ function fixture(state = snapshot()) {
   const ctx = {
     ref: value => ({ value }), computed: fn => ({ get value() { return fn() } }),
     getContinuousMoxiangState: async () => state,
+    // profile.uvue 用 mapProfileError 把业务码转成可读文案；沙箱按真实实现补最小等价，
+    // 否则 loadPortraitState 的 catch 分支会抛 ReferenceError 而不是走降级文案。
+    mapProfileError: (code, fallback) => code == 'AI_FEATURE_DISABLED' ? 'AI 画像功能当前不可用' : fallback,
     getPortraitNarrative: async () => ({ success: true, data: { subject: 'personal', status: 'confirmed', revision_id: 7, persona_title: '已确认称号', persona_tags: ['安静'] } }),
     uni: { navigateTo: o => urls.push(o.url), showToast: () => {} }
   }

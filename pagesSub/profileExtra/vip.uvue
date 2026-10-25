@@ -65,6 +65,7 @@
 
 <script setup lang="uts">
 import { getMembershipStatus, getMembershipPackages, createMembershipOrder, testPayOrder } from '@/api'
+import { setCurrentUserVipStatus } from '@/utils/quota.uts'
 
 const isVip = ref(false)
 const paymentVisible = ref(false)
@@ -110,7 +111,11 @@ const loadMembership = async () => {
 	loadError.value = ''
 	try {
 		const statusRes = await getMembershipStatus()
-		if (statusRes.success && statusRes.data != null) isVip.value = (statusRes.data as any).is_vip == true
+		if (statusRes.success && statusRes.data != null) {
+			isVip.value = (statusRes.data as any).is_vip == true
+			// 以服务端为准回写本地，避免本地缓存与真实会员态长期分叉。
+			setCurrentUserVipStatus(isVip.value)
+		}
 		const packagesRes = await getMembershipPackages()
 		if (!packagesRes.success || packagesRes.data == null || !Array.isArray(packagesRes.data)) {
 			loadError.value = packagesRes.message != null ? '' + packagesRes.message : '会员套餐暂时无法读取'
@@ -181,6 +186,11 @@ const confirmPayment = async () => {
 		}
 		paymentVisible.value = false
 		isVip.value = true
+		// 服务端测试支付已履约：把 VIP 态回写本地（按用户分键）。
+		// 不回写的话，首页本地额度仍按普通用户 8 人判定。
+		// 注意：不清理当日已浏览用户集合——升级只是把上限从 8 提到 20，
+		// 已看过的人应保持"已看过"，否则会被当成新人重复计数、反向多给额度。
+		setCurrentUserVipStatus(true)
 		uni.showToast({ title: '开通成功', icon: 'success' })
 		setTimeout(() => { returnAfterPayment() }, 600)
 	} catch (e) {

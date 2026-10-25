@@ -52,8 +52,8 @@
 
 		<template v-else-if="activeStep == 'education'">
 			<view class="detail-hero"><text class="hero-title">学历认证</text><view class="hero-underline"></view><text class="hero-subtitle">认证多一点，了解更安心</text></view>
-			<view v-if="educationStatus == 1 || educationStatus == 2" class="status-panel">
-				<view class="status-band"><text class="status-band-title">{{ educationStatus == 1 ? '审核中' : '审核已通过' }}</text><text class="status-band-copy">{{ educationStatus == 1 ? '平台正在核验您提交的学历材料' : '您的学历材料已通过平台审核' }}</text></view>
+			<view v-if="educationReviewing || educationStatus == 2" class="status-panel">
+				<view class="status-band"><text class="status-band-title">{{ educationReviewing ? '审核中' : '审核已通过' }}</text><text class="status-band-copy">{{ educationReviewing ? '平台正在核验您提交的学历材料' : '您的学历材料已通过平台审核' }}</text></view>
 				<view class="document-card"><image v-if="educationExistingImage != ''" class="document-preview" :src="mediaUrl(educationExistingImage)" mode="aspectFill" @tap="previewImage(educationExistingImage)"></image><view v-else class="document-placeholder"><text>学历材料</text></view><text class="document-meta">{{ selectedEducationText }} · {{ school || '毕业学校' }}</text><text class="privacy-copy">材料仅用于平台审核，未经允许不会对外公开。</text></view>
 			</view>
 			<view v-else class="education-form">
@@ -63,7 +63,7 @@
 				<view class="upload-section"><text class="upload-title">上传证书照片</text><view v-if="educationImage == ''" class="upload-tile" @tap="chooseEducationImage"><text class="upload-plus">＋</text><text>上传图片</text></view><view v-else class="upload-preview-wrap"><image class="upload-preview" :src="educationImage" mode="aspectFill" @tap="previewImage(educationImage)"></image><view class="remove-image" @tap="removeEducationImage"><text>删除重选</text></view></view></view>
 				<view class="privacy-note"><text class="privacy-title">温馨提示</text><text>仅供平台审核，未经您允许不会对外公开；证书姓名需清晰可见，并与实名认证一致。</text></view>
 			</view>
-			<view v-if="educationStatus != 1 && educationStatus != 2" class="bottom-action"><view class="primary-button" :class="{ disabled: educationSubmitting }" @tap="confirmEducation"><text>{{ educationSubmitting ? '提交中…' : '提交审核' }}</text></view></view>
+			<view v-if="!educationReviewing && educationStatus != 2" class="bottom-action"><view class="primary-button" :class="{ disabled: educationSubmitting }" @tap="confirmEducation"><text>{{ educationSubmitting ? '提交中…' : '提交审核' }}</text></view></view>
 		</template>
 
 		<template v-else-if="activeStep == 'single_pledge'">
@@ -101,6 +101,11 @@ const realnameStatus = ref(0)
 const educationStatus = ref(0)
 const educationFailReason = ref('')
 const educationExistingImage = ref('')
+// status==1 只代表「有记录且处于待审」，并不代表用户真的提交过材料。
+// 后端返回的 material_submitted / material 才是实际提交凭据；缺失时必须回到表单，
+// 否则会出现"没提交过材料却显示审核中"的死页（无表单、无法重新提交）。
+const educationSubmitted = ref(false)
+const educationReviewing = computed(() => educationStatus.value == 1 && educationSubmitted.value)
 const avatarUploaded = ref(false)
 const pledgeStatus = ref(0)
 const pledgeFailReason = ref('')
@@ -187,6 +192,7 @@ const refreshStatus = async () => {
 			educationStatus.value = item.status != null ? Number(item.status) : 0
 			educationFailReason.value = item.fail_reason != null ? String(item.fail_reason) : ''
 			educationExistingImage.value = item.material != null ? String(item.material) : ''
+			educationSubmitted.value = item.material_submitted == true || educationExistingImage.value.trim() != ''
 			if (item.education != null && educationOptions.indexOf(String(item.education)) >= 0) { educationIndex.value = educationOptions.indexOf(String(item.education)); educationSelected.value = true }
 			if (item.school != null) school.value = String(item.school)
 		}

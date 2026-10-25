@@ -31,11 +31,14 @@
 					<text class="active-copy">{{ activeStatus.active ? '继续购买会在现有有效期基础上延长' : '置顶曝光，让更多优质用户看见你' }}</text>
 				</view>
 
-				<!-- 3. 置顶推荐模块（无头像卡片，纯留白） -->
-				<view class="recommend-module">
+				<!-- 3. 置顶推荐模块：有推荐头像才展示，避免整块空白看起来像加载失败 -->
+				<view class="recommend-module" v-if="recommendImages.length > 0">
 					<view class="module-head">
 						<text class="module-title">置顶推荐</text>
 						<view class="recommend-btn" @tap="openPayment"><text>立即置顶</text></view>
+					</view>
+					<view class="recommend-avatars">
+						<image v-for="(img, index) in recommendImages" :key="index" class="recommend-avatar" :src="img" mode="aspectFill"></image>
 					</view>
 				</view>
 
@@ -47,7 +50,8 @@
 							<view v-if="plan.tag != '' || plan.recommended" class="plan-tag">{{ plan.tag != '' ? plan.tag : '推荐' }}</view>
 							<text class="plan-name">{{ plan.name }}</text>
 							<text class="plan-duration">有效期 {{ plan.days }} 天</text>
-							<!-- 单价按需求后补，暂不写死；合计金额见底部支付栏 -->
+							<!-- 卡片内直接给价格，用户才能横向比价；原先只在底部合计出现 -->
+							<text class="plan-price">¥{{ plan.price }}</text>
 						</view>
 					</view>
 				</view>
@@ -156,7 +160,8 @@ onMounted(() => { loadStatus() })
 
 /* 1. Banner */
 .hero-banner { position: relative; display: flex; flex-direction: column; align-items: center; padding: 0 20px 60px; background: linear-gradient(152deg, #6BA88A 0%, #8EC3AD 52%, #AFD6C4 100%); border-radius: 0 0 30px 30px; overflow: hidden; }
-.status-bar-spacer { height: 44px; }
+/* 写死 44px 在刘海屏上会让返回按钮顶进状态栏，改用安全区内边距 */
+.status-bar-spacer { height: calc(44px + env(safe-area-inset-top)); }
 .hero-nav { width: 100%; height: 44px; display: flex; flex-direction: row; align-items: center; justify-content: space-between; }
 .nav-back { width: 40px; height: 40px; display: flex; flex-direction: row; align-items: center; justify-content: center; }
 .nav-back-icon { font-family: Arial, sans-serif; font-size: 34px; font-weight: 300; line-height: 34px; color: #FFFFFF; transform: translateY(-1px); }
@@ -171,7 +176,9 @@ onMounted(() => { loadStatus() })
 
 /* 3. 置顶推荐模块 */
 .recommend-module { margin: 16px 16px 0; background: #FAFBFA; border: 1px solid #F3F4F3; border-radius: 26px; overflow: hidden; }
-.module-head { display: flex; flex-direction: row; align-items: center; justify-content: space-between; padding: 18px 18px 22px; }
+.module-head { display: flex; flex-direction: row; align-items: center; justify-content: space-between; padding: 18px 18px 12px; }
+.recommend-avatars { display: flex; flex-direction: row; gap: 10px; padding: 0 18px 18px; }
+.recommend-avatar { width: 44px; height: 44px; border-radius: 999px; background: #EEF1EF; }
 .module-title { color: #111111; font-size: 14px; font-weight: 600; letter-spacing: .5px; }
 .recommend-btn { padding: 7px 16px; border-radius: 999px; background: #4BA883; color: #FFFFFF; font-size: 12px; letter-spacing: .5px; }
 
@@ -184,6 +191,7 @@ onMounted(() => { loadStatus() })
 .plan-card.selected .plan-name { color: #4BA883; }
 .plan-tag { position: absolute; top: 17px; right: 16px; padding: 3px 9px; border-radius: 999px; background: #E8F3ED; color: #4A7E66; font-size: 11px; }
 .plan-name { color: #1A1A1A; font-size: 13px; letter-spacing: .4px; }
+.plan-price { margin-top: 6px; color: #4A7E66; font-size: 15px; font-weight: 600; }
 .plan-duration { margin-top: 4px; color: #7A7A7A; font-size: 11px; }
 
 /* 5. 专属权益 */

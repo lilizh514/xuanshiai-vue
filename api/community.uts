@@ -24,7 +24,7 @@ import {
   mockLikedUserIds,
   mockCurrentCity,
   mockMeProfile,
-  
+  mockCommunityQuotas
 } from '@/mock'
 
 
@@ -719,12 +719,15 @@ function mapActivity(row: any): any {
 
 function mapBanner(row: any): any {
   if (row == null) return null
-  const linkType = row.link_type != null ? ('' + row.link_type) : 'topic'
+  // 库表 config_banner.link_type 的合法值是 activity / url / miniprogram / none，
+  // 并不包含 topic / plane。历史上运营位多为空值，空值沿用"话题"语义以兼容已有配置；
+  // url / miniprogram / none 这些明确的外链类型按普通运营位渲染，不再误当作"热门话题"面板。
+  const linkType = row.link_type != null ? ('' + row.link_type).trim() : ''
   let type = 'topic'
   if (linkType == 'activity' || linkType == 'offline') type = 'activity'
   else if (linkType == 'plane' || linkType == 'paper_plane' || linkType == 'paper-plane') type = 'plane'
-  else if (linkType == 'topic') type = 'topic'
-  else type = linkType
+  else if (linkType == 'topic' || linkType == '') type = 'topic'
+  else type = 'feature'
   let targetId = 0
   const lv = row.link_value
   if (lv != null) {
@@ -737,8 +740,8 @@ function mapBanner(row: any): any {
     title: row.title != null ? row.title : '',
     subtitle: '',
     description: '',
-    cta: type == 'activity' ? '查看活动' : type == 'plane' ? '去放飞' : '进入话题',
-    kicker: type == 'activity' ? 'OFFLINE' : type == 'plane' ? 'PLANE' : 'TOPIC',
+    cta: type == 'activity' ? '查看活动' : type == 'plane' ? '去放飞' : (type == 'topic' ? '进入话题' : '查看详情'),
+    kicker: type == 'activity' ? 'OFFLINE' : type == 'plane' ? 'PLANE' : (type == 'topic' ? 'TOPIC' : 'FEATURE'),
     cover: row.image_url != null ? resolveMediaUrl(row.image_url) : '',
     targetId: targetId
   }

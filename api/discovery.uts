@@ -35,7 +35,11 @@ export function mapCard(row: any, fallbackName: string = '用户'): any {
     zodiac: card.zodiac != null ? '' + card.zodiac : (card.constellation != null ? '' + card.constellation : ''),
     hometown: card.hometown != null ? '' + card.hometown : '',
     income: card.income != null ? '' + card.income : '',
-    bio: card.bio != null ? '' + card.bio : (card.introduction != null ? '' + card.introduction : (card.intro != null ? '' + card.intro : '')),
+    // self_intro 才是编辑页「自我介绍」真正写入的字段；漏掉它会让首页名片首屏「关于我」恒为空，
+    // 只能等 second-pass 的 getUserDetail 再补，而那次请求一旦 429/失败就永久空白。
+    bio: card.self_intro != null && ('' + card.self_intro).trim() != ''
+      ? '' + card.self_intro
+      : (card.bio != null ? '' + card.bio : (card.introduction != null ? '' + card.introduction : (card.intro != null ? '' + card.intro : ''))),
     education: card.education_level != null ? '' + card.education_level : (card.education != null ? '' + card.education : '未填写'),
     educationLevel: card.education_level,
     job: card.occupation != null ? '' + card.occupation : (card.job != null ? '' + card.job : '未填写'),

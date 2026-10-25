@@ -723,7 +723,7 @@
 <!-- 每日查看配额用尽弹窗 -->
 		<XsaModal
 			:visible="quotaExhaustedVisible && !welcomeVisible"
-			title="今日查看次数已用完"
+			title="今日可查看的新资料已用完"
 			:show-cancel="false"
 			confirm-text="开通会员"
 			@close="quotaExhaustedVisible = false"
@@ -755,12 +755,15 @@
 	import { likeUser, blockUser, unblockUser, saveAiAvatarProfileSnapshot } from '@/api'
 	import { getDiscoveryRecommendations, getDiscoveryPlaza, getDynamicList, getDynamicDetail, getUserDetail, getOwnProfile } from '@/api'
 	import { getMembershipPackages } from '@/api/discovery.uts'
+	import { getMembershipStatus } from '@/api/membership.uts'
 	import { resolveMediaUrl, getAccessToken } from '@/api/config.uts'
+	import { locationDisplayByCodes, incomeDisplayText } from '@/utils/profile-field-display.uts'
 	import {
 		recordProfileView,
 		resetDailyIfNeeded,
 		getDailyViewRemaining,
-		getDailyViewQuota
+		getDailyViewQuota,
+		setCurrentUserVipStatus
 	} from '@/utils/quota.uts'
 
 	// ========== 欢迎页 ==========
@@ -817,16 +820,7 @@
 	}
 
 	// ========== 推荐页数据 ==========
-	const formatIncomeDisplay = (raw: any): string => {
-		if (raw == null || raw === '') return '未填写'
-		const text = '' + raw
-		const amount = Number(text)
-		if (!isNaN(amount) && text.trim() != '') {
-			const wan = Math.round(amount / 1000) / 10
-			return (wan % 1 == 0 ? '' + Math.round(wan) : '' + wan) + 'w'
-		}
-		return text.replace(/万/g, 'w')
-	}
+	const formatIncomeDisplay = (raw: any): string => incomeDisplayText(raw)
 	const educationText = (raw: any): string => {
 		const labels = ['', '博士', '硕士', '本科', '大专', '高中', '中专', '初中', '小学']
 		if (raw == null || raw === '') return '未填写'
@@ -853,7 +847,10 @@
 	const locationTextByCityCode = (rawCode: any): string => {
 		const cityCode = rawCode != null ? '' + rawCode : ''
 		if (cityCode == '') return '未填写'
-		return cityCode
+		// 卡片只带 city_code，能查到市/区就显示地名；查不到也不要回显裸编码，
+		// 否则首页会出现「现居 110100」而编辑页是「北京市 市辖区 东城区」。
+		const resolved = locationDisplayByCodes(cityCode, cityCode, '')
+		return resolved != '' ? resolved : '未填写'
 	}
 	const basicInfoRows = computed(() => [
 		[
@@ -1145,20 +1142,39 @@
 	const showQuotaExhausted = (serverMessage: string = '') => {
 		const message = serverMessage.trim()
 		quotaExhaustedMessage.value = message != ''
-			? message + '。开通会员可增加每日浏览额度。'
-			: '今日完整浏览额度已用完，开通会员可增加每日浏览额度。'
+			? message + '。开通会员可提高每日查看人数。'
+			: '今日可查看的新资料已用完，开通会员可提高每日查看人数。'
 		quotaExhaustedVisible.value = true
 	}
 	const handleQuotaUpgrade = () => { quotaExhaustedVisible.value = false; uni.navigateTo({ url: '/pagesSub/profileExtra/vip' }) }
+	// 会员态以服务端为准：每次回首页同步一次，写回按 user_id 分键的本地缓存。
+	// 解决两类问题：① 换测试账号后本地残留上一个号的 VIP 标记；② 账号一/二本身是会员，
+	// 本地无缓存时会被当成普通用户，本地查看额度按 8 次判定。
+	const syncViewerVipStatus = async () => {
+		if (getAccessToken() == '') return
+		try {
+			const res = await getMembershipStatus()
+			if (res != null && res.success && res.data != null) {
+				setCurrentUserVipStatus((res.data as any).is_vip === true)
+			}
+		} catch (e) {
+			// 读取失败保留本地缓存，不阻塞首页
+		}
+	}
 	const switchToNextRecommend = () => {
-		if (!recordProfileView()) { showQuotaExhausted(); return }
 		const list = filteredRecommendUsers.value as any[]
+		// 先判空再记额度：空列表不该消耗任何一次查看机会。
 		if (list.length === 0) return
+		const nextIndex = (currentRecommendIndex.value + 1) % list.length
+		const nextId = Number((list[nextIndex] as any).id || 0)
+		// 额度按「不同用户」计数（幂等）：切到已看过的人免费通过，
+		// 新人且额度已满才拦截，避免同一个用户被反复计数。
+		if (!recordProfileView(nextId)) { showQuotaExhausted(); return }
 		// H2：切换对象先作废旧动态与旧背景，再按新的 targetId 发起读取；
 		// 新对象没有动态时保持空态，不残留上一位的动态。
 		invalidateFeedDynamics()
 		recommendBackground.value = ''
-		currentRecommendIndex.value = (currentRecommendIndex.value + 1) % list.length
+		currentRecommendIndex.value = nextIndex
 		loadRecommendBackground()
 		loadFeedDynamics(Number(currentRecommendUser.value.id || 0))
 	}
@@ -1513,6 +1529,7 @@
 			authExpired.value = false
 			loadHomeDiscovery()
 			loadMembershipPlans()
+			syncViewerVipStatus()
 		} else {
 			// H6：没有 token 时不再静默跳过，落到登录引导而不是「暂时没有新的推荐」。
 			needLogin.value = true
@@ -1541,6 +1558,7 @@
 				needLogin.value = false
 				authExpired.value = false
 				loadHomeDiscovery()
+				syncViewerVipStatus()
 			} else {
 				// H6：没有 token 时无条件落到登录态；若本次会话内刚发生过 401，保留「已失效」文案。
 				needLogin.value = true

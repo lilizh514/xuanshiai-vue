@@ -6,7 +6,7 @@
 				<text class="article-updated" v-if="article.updatedAt">更新于 {{ article.updatedAt }}</text>
 			</view>
 			<view class="article-body">
-				<text class="article-text">{{ article.content }}</text>
+				<text class="article-text" v-for="(paragraph, pi) in paragraphs" :key="pi">{{ paragraph }}</text>
 			</view>
 		</scroll-view>
 
@@ -31,6 +31,22 @@ let type = ''
 let article = ref(null as ArticleDetail | null)
 let loading = ref(true)
 let error = ref('')
+
+// 源文用 \n\n 分段。整段丢进一个 <text> + white-space:pre-wrap 会把空行
+// 也算成完整行高（1.8 倍），视觉上就是"每条之间空一大截"。
+// 这里按空行拆成独立段落，由 CSS 控制段间距。
+const paragraphs = computed((): string[] => {
+	const current = article.value
+	if (current == null || current.content == null) return []
+	const raw = ('' + current.content).replace(/\r\n/g, '\n')
+	const blocks = raw.split(/\n\s*\n/)
+	const list: string[] = []
+	for (const block of blocks) {
+		const trimmed = block.trim()
+		if (trimmed != '') list.push(trimmed)
+	}
+	return list.length > 0 ? list : ['']
+})
 
 const loadArticle = async (articleType: string) => {
 	loading.value = true
@@ -100,11 +116,17 @@ const onRetry = () => {
 }
 
 .article-text {
+	display: block;
 	font-size: 30rpx;
 	color: #333333;
-	line-height: 1.8;
+	line-height: 1.65;
 	white-space: pre-wrap;
 	word-break: break-all;
+	margin-bottom: 20rpx;
+}
+
+.article-text:last-child {
+	margin-bottom: 0;
 }
 
 .empty-state {

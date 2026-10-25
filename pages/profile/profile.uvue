@@ -115,14 +115,14 @@
 				</view>
 			</view>
 
-			<!-- VIP 会员卡 -->
-			<view v-if="!user.isVip" class="vip-card" @tap="onOpenVIP">
+			<!-- VIP 会员卡：会员态不再整块隐藏，否则已开通用户找不到续费/查看权益的入口 -->
+			<view class="vip-card" @tap="onOpenVIP">
 				<view class="vip-crown-wrap">
 					<text class="ic ic-vip ic-huiyuan vip-crown"></text>
 				</view>
 				<view class="vip-text-col">
-					<text class="vip-card-title">开通会员</text>
-					<text class="vip-card-sub">解锁全部功能，遇见更多可能</text>
+					<text class="vip-card-title">{{ user.isVip ? '会员中心' : '开通会员' }}</text>
+					<text class="vip-card-sub">{{ user.isVip ? '查看权益与续费' : '解锁全部功能，遇见更多可能' }}</text>
 				</view>
 				<text class="ic ic-sys ic-jiantou-you vip-arrow"></text>
 			</view>
@@ -206,7 +206,9 @@ import XsaZhiyuMark from '@/components/XsaZhiyuMark.uvue'
 import XsaZhiyuHub from '@/components/XsaZhiyuHub.uvue'
 import { getProfileOverview, getProfileCompletion, getMembershipStatus, getPortraitNarrative } from '@/api'
 import { getContinuousMoxiangState, type ContinuousMoxiangState } from '@/api/ai-moxiang.uts'
+import { mapProfileError } from '@/api/ai-profile.uts'
 import { resolveMediaUrl } from '@/api/config.uts'
+import { setCurrentUserVipStatus } from '@/utils/quota.uts'
 import { attachmentStyleLabel, MASTER_ROLE_NAME } from '@/utils/moxiang-badge.uts'
 
 const systemInfo = uni.getSystemInfoSync()
@@ -241,6 +243,11 @@ const portraitHasResult = computed((): boolean => {
 })
 const portraitStateLoading = ref(false)
 const portraitStateError = ref('')
+// 画像能力被服务端关闭（AI_FEATURE_DISABLED）时为 true：不再重试请求，只在点击时如实提示。
+const portraitUnavailable = ref(false)
+// 上一次画像状态读取失败的时刻，用于点击冷却，避免连点放大无效请求。
+let lastPortraitFailedAt = 0
+const PORTRAIT_RETRY_COOLDOWN_MS = 4000
 // H3：概览区块独立的加载/错误态，失败给重试入口，不把昵称永久停在「加载中」。
 const overviewLoading = ref(false)
 const overviewError = ref('')
@@ -285,7 +292,9 @@ const applyPortraitStateCopy = () => {
 		portraitDesc.value = '从你想聊的开始，不必先完成任何一份画像'
 	} else {
 		portraitTag.value = '状态暂未读取'
-		portraitDesc.value = '暂时无法确认画像状态，可稍后重试'
+		// 有明确错误原因时如实展示（如「AI 画像功能当前不可用」），
+		// 不要用模糊文案把服务端主动关闭能力的情况盖掉。
+		portraitDesc.value = portraitStateError.value != '' ? portraitStateError.value : '暂时无法确认画像状态，可稍后重试'
 	}
 }
 
@@ -298,6 +307,9 @@ const loadPortraitState = async (): Promise<boolean> => {
 		const state = await getContinuousMoxiangState()
 		if (!portraitPageVisible || seq != portraitReadSeq) return false
 		portraitSnapshot.value = state
+		// 读取成功说明能力已恢复（例如服务端重新打开了开关），解除不可用标记。
+		portraitUnavailable.value = false
+		lastPortraitFailedAt = 0
 		const items = [state.personal, state.ideal_partner]
 		if (!state.consent_granted) portraitState.value = 'consent'
 		else if (items.some((item) => item.status == 'awaiting_confirmation')) portraitState.value = 'confirming'
@@ -308,11 +320,18 @@ const loadPortraitState = async (): Promise<boolean> => {
 		else portraitState.value = 'idle'
 		applyPortraitStateCopy()
 		return true
-	} catch (error) {
+	} catch (error: any) {
 		if (!portraitPageVisible || seq != portraitReadSeq) return false
 		portraitSnapshot.value = null
 		portraitState.value = 'unknown'
-		portraitStateError.value = '画像状态暂时无法读取'
+		// 不再统一写死「画像状态暂时无法读取」：按后端业务码分流，
+		// 让「功能未开放」和「真的读取失败」在界面上可区分。
+		const businessCode = error != null && error.businessCode != null ? '' + error.businessCode : ''
+		const failedRequestId = error != null && error.requestId != null ? '' + error.requestId : ''
+		portraitStateError.value = mapProfileError(businessCode, '画像状态暂时无法读取')
+		portraitUnavailable.value = businessCode == 'AI_FEATURE_DISABLED'
+		lastPortraitFailedAt = Date.now()
+		console.error('[Profile] portrait state failed', businessCode, failedRequestId)
 		applyPortraitStateCopy()
 		return false
 	} finally {
@@ -360,6 +379,8 @@ const loadOverview = async () => {
 		.then((membershipRes: any) => {
 			if (membershipRes != null && membershipRes.success && membershipRes.data != null) {
 				user.value.isVip = (membershipRes.data as any).is_vip === true
+				// 会员态以服务端为准，同时回写本地缓存（按 user_id 分键），供首页本地查看额度判定。
+				setCurrentUserVipStatus(user.value.isVip === true)
 			}
 		})
 		.catch((error: any) => { console.error('[Profile] membership refresh failed', error) })
@@ -474,11 +495,21 @@ const openPortraitDestination = () => {
 const onAiPortrait = () => {
 	if (!portraitPageVisible || portraitStateLoading.value) return
 	if (portraitState.value == 'unknown') {
+		// 服务端明确关闭该能力（retryable=false）：重试没有意义，直接如实说明。
+		if (portraitUnavailable.value) {
+			uni.showToast({ title: portraitStateError.value, icon: 'none' })
+			return
+		}
+		// 冷却期内不再重复请求，避免连点把失败日志放大成多次无效调用。
+		if (Date.now() - lastPortraitFailedAt < PORTRAIT_RETRY_COOLDOWN_MS) {
+			uni.showToast({ title: '正在恢复中，请稍后再试', icon: 'none' })
+			return
+		}
 		// 状态未知时不猜去向：先重试读取，仍失败则如实提示，不冒充新用户。
 		loadPortraitState().then((ok) => {
 			if (!portraitPageVisible) return
 			if (!ok || portraitState.value == 'unknown') {
-				uni.showToast({ title: '画像状态暂时无法读取，请稍后重试', icon: 'none' })
+				uni.showToast({ title: portraitStateError.value, icon: 'none' })
 				return
 			}
 			openPortraitDestination()

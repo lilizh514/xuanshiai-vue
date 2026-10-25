@@ -92,7 +92,14 @@ function unwrapMoxiangResponse(raw: any): any {
 	if (raw != null && typeof raw == 'object' && raw.success === false) {
 		const message = raw.message != null ? String(raw.message) : MASTER_ROLE_NAME + '数据加载失败'
 		const error: any = new Error(message)
+		// code 保持 HTTP 状态码语义不变：my-portrait-master 等页面用 Number(e.code)
+		// 判断 401/403 来决定是否清理私密缓存，改成业务码会让该分支失效。
 		error.code = raw.code
+		error.httpStatus = raw.code != null ? Number(raw.code) : 0
+		// 业务码单独暴露（形如 AI_FEATURE_DISABLED），供页面按原因分流展示。
+		error.businessCode = raw.businessCode != null ? '' + raw.businessCode : ''
+		error.requestId = raw.requestId != null ? '' + raw.requestId : ''
+		error.retryable = raw.retryable !== false
 		throw error
 	}
 	if (raw != null && typeof raw == 'object' && raw.success === true) {

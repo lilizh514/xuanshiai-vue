@@ -19,7 +19,9 @@ assert.match(paperPlane, /paperPlaneProfile\.nickname/)
 assert.match(paperPlane, /paperPlaneProfile\.initialized/)
 assert.doesNotMatch(paperPlane, /<view class="plane-profile-bar">/)
 
-assert.match(paperPlane, /扔纸飞机次数：\{\{ total - remain \+ purchasedThrowCount \}\}/)
+// 额度文案改为服务端 remain + 本地已捡分开展示，不再相加混算
+assert.match(paperPlane, /今日可扔：\{\{ remain \}\} 次/)
+assert.match(paperPlane, /今日已捡：\{\{ catchCount \}\} 次/)
 assert.match(paperPlane, /@click="openPlaneQuota"/)
 assert.match(paperPlane, />获取纸飞机<\/text>/)
 assert.match(paperPlane, /<view class="quiet-note">/)

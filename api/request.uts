@@ -83,6 +83,40 @@ async function mockRequest(options: any) {
   }
 }
 
+/**
+ * 从后端错误响应里提取结构化业务错误。
+ * 后端对 AI 等能力使用 { code, message, request_id, retryable } 的 detail 对象，
+ * 只取 message 会丢掉业务码，导致前端无法按原因分流展示。
+ */
+function extractBusinessError(data: any): any {
+  const empty: any = { code: '', message: '', requestId: '', retryable: true }
+  if (data == null || typeof data != 'object') return empty
+  const detail = data.detail
+  if (detail != null && typeof detail == 'object' && !Array.isArray(detail)) {
+    return {
+      code: detail.code != null ? '' + detail.code : '',
+      message: detail.message != null ? '' + detail.message : '',
+      requestId: detail.request_id != null ? '' + detail.request_id : '',
+      retryable: detail.retryable !== false
+    }
+  }
+  return empty
+}
+
+/** 从响应头取 request-id，用于线上排障时定位单次请求。 */
+function extractHeaderRequestId(res: any): string {
+  try {
+    const header = res != null ? res.header : null
+    if (header != null && typeof header == 'object') {
+      const value = header['x-request-id'] != null ? header['x-request-id'] : header['X-Request-Id']
+      if (value != null) return '' + value
+    }
+  } catch (e) {
+    // 忽略
+  }
+  return ''
+}
+
 function extractDetail(data: any): string {
   if (data == null) return '请求失败'
   if (typeof data === 'string') return data
@@ -92,6 +126,10 @@ function extractDetail(data: any): string {
       const first = data.detail[0]
       if (first != null && first.msg != null) return '' + first.msg
       return JSON.stringify(data.detail)
+    }
+    // 对象形态的 detail：优先取后端给出的 message，别再回落到「请求失败」
+    if (typeof data.detail === 'object' && data.detail.message != null) {
+      return '' + data.detail.message
     }
   }
   if (data.message != null) return '' + data.message
@@ -186,11 +224,17 @@ async function httpRequest(options: any) {
           restoreOnboardingState(preserved)
         }
         const message = extractDetail(raw)
+        const biz = extractBusinessError(raw)
+        const headerRequestId = extractHeaderRequestId(res)
         resolve({
           success: false,
           data: raw,
           code: status,
-          message: message
+          message: message,
+          // 以下三个字段向后兼容新增：现有调用方只读 success/data/code/message。
+          businessCode: biz.code,
+          requestId: biz.requestId != '' ? biz.requestId : headerRequestId,
+          retryable: biz.retryable
         })
       },
       fail: (err: any) => {

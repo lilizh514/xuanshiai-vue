@@ -190,7 +190,15 @@ const HEIGHT_MAX = 220
 // 学历阶梯按升序展示（不限到博士）；education_min 存旧版降序下标（1 博士 - 8 小学），两者换算为 9 - 下标
 const eduLabels = ['不限', '小学', '初中', '高中', '中专', '大专', '本科', '硕士', '博士']
 // 吸烟/饮酒要求已由 smoking/drinking_requirement 结构化承载，不再进 extra_requirement；历史旧选项在下次保存时清除
-const extraOptions = ['有稳定工作', '重视家庭', '愿意认真沟通']
+const BASE_EXTRA_OPTIONS = ['有稳定工作', '重视家庭', '愿意认真沟通']
+// extra_requirement 早期是枚举编码/自由文本，直接按白名单过滤会把旧值（例如 "1"）
+// 静默丢弃，用户只看到裸码或空白。这里把历史编码映射成文案，无法映射的旧值
+// 仍然保留成可点的选项，保证"看得见、能取消"，不会在保存时被无声抹掉。
+const LEGACY_EXTRA_MAP: Map<string, string> = new Map()
+LEGACY_EXTRA_MAP.set('1', '有稳定工作')
+LEGACY_EXTRA_MAP.set('2', '重视家庭')
+LEGACY_EXTRA_MAP.set('3', '愿意认真沟通')
+const extraOptions = ref(BASE_EXTRA_OPTIONS.slice())
 // 与后端 PreferenceUpdateRequest 对齐：婚姻 0 不限 1 未婚 2 离异 3 丧偶；住房 0 不限 1 有房 2 无房；烟酒 0 不限 1 不抽(饮) 2 可接受
 const marryOptions = ['不限', '未婚', '离异', '丧偶']
 const housingOptions = ['不限', '有房', '无房']
@@ -538,7 +546,11 @@ const load = async () => {
 			const parts = rawExtra.split(',')
 			for (let i = 0; i < parts.length; i++) {
 				const part = parts[i].trim()
-				if (part != '' && extraOptions.indexOf(part) >= 0 && parsed.indexOf(part) < 0) parsed.push(part)
+				if (part == '') continue
+				const mapped = LEGACY_EXTRA_MAP.get(part)
+				const label = mapped != null ? mapped : part
+				if (extraOptions.value.indexOf(label) < 0) (extraOptions.value as string[]).push(label)
+				if (parsed.indexOf(label) < 0) parsed.push(label)
 			}
 		}
 		extras.value = parsed

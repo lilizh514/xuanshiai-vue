@@ -92,7 +92,12 @@ assert.match(resultPage, /String\(draft\.data\.draft_id \?\? ''\) != cardDraftId
 assert.match(resultPage, /v-model="row\.value"/, 'intro must be editable before explicit publication')
 assert.match(resultPage, /profileCardSelectedTags\.length < profileCardTagBudget\(this\.profileCardExistingTagCount\)/, 'S1 tag selection must go through profileCardTagBudget (cap 3, bounded by 10 - existing)')
 assert.match(resultPage, /return room > MAX_PROFILE_CARD_ADOPT_TAGS \? MAX_PROFILE_CARD_ADOPT_TAGS : room/, 'S1 per-adopt explicit tag cap stays 3')
-assert.doesNotMatch(resultPage, /add\('qa_/, 'S1 must not implicitly adopt QA slots')
+// 2026-10-22 产品变更：资料卡成稿范围由「自我介绍 + 兴趣标签」扩展到三题「关于我」问答。
+// 仍然必须显式——问答只能经用户确认的 accepted.qa_answers 写入，已有答案的题目不得默认采用。
+assert.match(resultPage, /add\('qa_1_partner'/, 'profile-card scope must cover the 3 about-me QA slots')
+assert.match(resultPage, /accepted\.qa_answers = qaAnswers/, 'QA slots must only be written through the explicit accepted payload')
+assert.match(resultPage, /selected: !locked/, 'QA slots that already have an answer must not be adopted by default')
+assert.match(resultPage, /questionId != 2 && this\.profileCardExistingQaIds\.indexOf\(questionId\) >= 0/, 'QA overwrite rule must mirror the backend (only slot 2 is replaced)')
 assert.match(resultPage, /确认画像只代表本人确认，不会自动公开/, 'profile-card modal must explain confirmation is not automatic publication')
 assert.match(resultPage, /不会修改长期择偶标准、发送消息或公开访谈原文/, 'profile-card modal must explain protected scopes')
 assert.match(resultPage, /onRequestApplyProfileCard/, 'profile-card apply must have an explicit confirmation step')

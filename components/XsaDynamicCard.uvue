@@ -19,7 +19,7 @@
 					</view>
 				</view>
 			<button
-				v-if="showFollow"
+				v-if="showFollow && !isSelf"
 				class="follow-btn"
 				:class="{ done: followed }"
 				@click.stop="handleFollow"
@@ -92,6 +92,7 @@
 				<text class="text text-muted">分享</text>
 			</view>
 			<button
+				v-if="!isSelf"
 				class="apply-btn"
 				:class="{ pending: applyStatus === 'pending', done: applyStatus === 'accepted' }"
 				@click="handleApply"
@@ -154,10 +155,13 @@ interface DynamicUser {
 interface Props {
 	dynamic: Dynamic
 	showFollow?: boolean
+	/** 本人发布的动态：不出现"关注"与"申请认识"，由父级换成删除入口 */
+	isSelf?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
-	showFollow: true
+	showFollow: true,
+	isSelf: false
 })
 
 const emit = defineEmits<{

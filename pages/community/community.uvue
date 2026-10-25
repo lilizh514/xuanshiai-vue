@@ -110,6 +110,23 @@
 						@click="setBannerIndex(i)"
 					></view>
 				</view>
+				<!--
+					话题/活动的入口原先 100% 依赖后端 config_banner 下发对应 type 的行，
+					运营没配就整块消失（只有纸飞机有本地兜底）。
+					这里补一排常驻入口，保证两个板块总可进入；banner 已覆盖时自动隐藏。
+				-->
+				<view class="head-entry-row" v-if="!hasBannerType('topic') || !hasBannerType('activity')">
+					<view class="head-entry" v-if="!hasBannerType('topic')" @click="openTopics">
+						<text class="head-entry-icon">#</text>
+						<text class="head-entry-title">话题标签</text>
+						<text class="head-entry-arrow">›</text>
+					</view>
+					<view class="head-entry" v-if="!hasBannerType('activity')" @click="openActivityList">
+						<text class="head-entry-icon">◷</text>
+						<text class="head-entry-title">线下活动</text>
+						<text class="head-entry-arrow">›</text>
+					</view>
+				</view>
 			</view>
 
 			<!-- 同城提示 -->
@@ -141,6 +158,7 @@
 					v-for="item in dynamicList"
 					:key="item.id"
 					:dynamic="normalizeDynamic(item)"
+					:is-self="isSelfAuthor(item)"
 					@user-click="handleUserClick"
 					@like="handleLike"
 					@comment="handleComment"
@@ -200,7 +218,8 @@ import XsaTabBar from '@/components/XsaTabBar.uvue'
 		collectDynamic,
 		shareDynamic,
 		followUserFromCommunity,
-		unfollowUserFromCommunity
+		unfollowUserFromCommunity,
+		deleteDynamic
 	} from '@/api'
 	import { guardCommunityVerification, guardRealName } from '@/utils/realNameGate.uts'
 
@@ -220,6 +239,20 @@ import XsaTabBar from '@/components/XsaTabBar.uvue'
 	const page = ref(1)
 	const pageSize = 10
 	const dynamicList = ref([])
+	// 当前登录用户 id：用于在卡片上隐藏"关注/申请认识"，并把 ⋯ 换成"删除"
+	const viewerId = ref(0)
+	try {
+		const storedViewerId = uni.getStorageSync('xsa_user_id')
+		if (storedViewerId != null && storedViewerId != '') {
+			const candidate = Number(storedViewerId)
+			if (!isNaN(candidate) && candidate > 0) viewerId.value = candidate
+		}
+	} catch (e) {}
+	const isSelfAuthor = (item: any): boolean => {
+		if (item == null || viewerId.value <= 0) return false
+		const authorId = Number(item.user != null && item.user.id != null ? item.user.id : (item.userId != null ? item.userId : 0))
+		return authorId > 0 && authorId == viewerId.value
+	}
 	const topics = ref([])
 	const featuredTopic = ref(null)
 	const hotTopics = ref([])
@@ -632,6 +665,8 @@ const bannerCta = (type: string) => {
 			uni.navigateTo({ url: '/pagesSub/community/activity-detail?id=' + id })
 			return
 		}
+		// 外链/未知类型的运营位：给一个确定的目的地，避免"点了没反应"
+		uni.navigateTo({ url: '/pagesSub/community/activity-list' })
 	}
 
 	const handleUserClick = (userId: number) => {
@@ -783,7 +818,37 @@ const handleLike = async (dynamicId: number) => {
 		})
 	}
 
+	const removeDynamicLocally = (dynamicId: number) => {
+		const list = dynamicList.value as any[]
+		dynamicList.value = list.filter((d: any) => Number(d.id) != Number(dynamicId))
+	}
+
+	const deleteOwnDynamic = (dynamicId: number) => {
+		uni.showModal({
+			title: '删除动态',
+			content: '删除后不可恢复，确定删除这条动态吗？',
+			success: async (modal: any) => {
+				if (modal.confirm != true) return
+				const res = await deleteDynamic(dynamicId)
+				if (!res.success) {
+					uni.showToast({ title: res.message != null && res.message != '' ? '' + res.message : '删除失败，请重试', icon: 'none' })
+					return
+				}
+				removeDynamicLocally(dynamicId)
+				uni.showToast({ title: '已删除', icon: 'none' })
+			}
+		})
+	}
+
 	const handleMore = (dynamicId: number, userId: number) => {
+		// 自己的动态只提供删除，不再走举报
+		if (viewerId.value > 0 && Number(userId) == viewerId.value) {
+			uni.showActionSheet({
+				itemList: ['删除动态'],
+				success: (res: any) => { if (res.tapIndex == 0) deleteOwnDynamic(dynamicId) }
+			})
+			return
+		}
 		reportTargetId.value = dynamicId
 		reportUserId.value = userId
 		reportVisible.value = true
@@ -828,6 +893,18 @@ const handleEmptyAction = () => {
 
 	const openTopics = () => {
 		uni.navigateTo({ url: '/pagesSub/community/topic-list' })
+	}
+
+	const openActivityList = () => {
+		uni.navigateTo({ url: '/pagesSub/community/activity-list' })
+	}
+
+	const hasBannerType = (type: string): boolean => {
+		const list = banners.value as any[]
+		for (let i = 0; i < list.length; i++) {
+			if ('' + list[i].type == type) return true
+		}
+		return false
 	}
 
 	const openTopic = (t: any) => {
@@ -1023,6 +1100,43 @@ const switchCity = () => {
 		display: flex;
 		flex-direction: column;
 		gap: 12px;
+	}
+
+	/* banner 缺 type 时的常驻入口（话题 / 线下活动） */
+	.head-entry-row {
+		display: flex;
+		flex-direction: row;
+		gap: 10px;
+	}
+
+	.head-entry {
+		flex: 1;
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		gap: 8px;
+		padding: 12px 14px;
+		border-radius: 14px;
+		background: var(--surface);
+		border: 1px solid var(--line);
+	}
+
+	.head-entry-icon {
+		font-size: 15px;
+		color: var(--accent);
+		font-weight: 700;
+	}
+
+	.head-entry-title {
+		flex: 1;
+		font-size: 13px;
+		color: var(--ink);
+		font-weight: 600;
+	}
+
+	.head-entry-arrow {
+		font-size: 14px;
+		color: var(--muted);
 	}
 
 .banner-swiper {

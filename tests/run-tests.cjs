@@ -35,6 +35,7 @@ const core = [
   'test-moxiang-continuous-profile.js',
   'test-moxiang-poster-public-source.js',
   'test-profile-card-adopt-replace.js',
+  'test-portrait-card-qa-contract.js',
   'test-moxiang-build-confirmation.js',
   'test-search-retry-idempotency.js',
   'test-home-recommend-display.js',

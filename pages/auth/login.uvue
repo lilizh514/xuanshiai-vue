@@ -81,9 +81,18 @@
 			</view>
 		</view>
 
+		<!-- 测试账号：默认只露出账号一、账号二（VIP 主验证号），其余折叠，
+		     避免一屏全是调试按钮把正式入口挤下去。 -->
 		<view class="secondary-actions">
 			<button class="debug-login-button" :disabled="authLoading || !agreementChecked" @click="handleDebugLogin(debugAccountPhones[0])">账号一 19730552884</button>
 			<button class="debug-login-button" :disabled="authLoading || !agreementChecked" @click="handleDebugLogin(debugAccountPhones[1])">账号二 13000000000</button>
+			<view v-if="debugAccountsExpanded" class="debug-accounts-more">
+				<button class="debug-login-button" :disabled="authLoading || !agreementChecked" @click="handleDebugLogin(debugAccountPhones[2])">账号三 13100000000</button>
+				<button class="debug-login-button" :disabled="authLoading || !agreementChecked" @click="handleDebugLogin(debugAccountPhones[3])">账号四 13200000000</button>
+				<button class="debug-login-button" :disabled="authLoading || !agreementChecked" @click="handleDebugLogin(debugAccountPhones[4])">账号五 13300000000</button>
+				<button class="debug-login-button" :disabled="authLoading || !agreementChecked" @click="handleDebugLogin(debugAccountPhones[5])">账号六 13400000000</button>
+			</view>
+			<text class="secondary-toggle" @click="toggleDebugAccounts">{{ debugAccountsExpanded ? '收起其他账号' : '其他测试账号' }}</text>
 			<text class="secondary-divider">|</text>
 			<text class="secondary-link" @click="handleFirstLogin">首次登录引导</text>
 		</view>
@@ -108,8 +117,14 @@
 	const countdown = ref(0)
 	const codeButtonDisabled = ref(false)
 	const codeButtonText = ref('获取验证码')
-	const debugAccountPhones = ['19730552884', '13000000000']
+	// 测试账号白名单：登录页快捷登录按钮与之一一对应，密码统一走 debugAccountPassword。
+	// 账号三/四/五/六 为「完全普通用户」：仅 user 角色、无会员记录（男/女/男/女），
+	// 用于实名、开通会员、浏览额度与权益回归。
+	const debugAccountPhones = ['19730552884', '13000000000', '13100000000', '13200000000', '13300000000', '13400000000']
 	const debugAccountPassword = 'password123'
+	// 账号三~六 默认折叠：一屏只留两个主验证号，其余点「其他测试账号」再展开。
+	const debugAccountsExpanded = ref(false)
+	const toggleDebugAccounts = () => { debugAccountsExpanded.value = !debugAccountsExpanded.value }
 
 	const goHome = () => {
 		uni.setStorageSync('xsa_skip_welcome_once', true)
@@ -366,6 +381,8 @@
 	.debug-login-button[disabled] { opacity: .55; }
 	.secondary-divider { color: var(--line); font-size: 12px; }
 	.secondary-link { color: var(--accent2); font-size: 12px; }
+	.secondary-toggle { color: var(--muted); font-size: 12px; text-decoration: underline; }
+	.debug-accounts-more { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; width: 100%; }
 	.login-footer { position: relative; z-index: 1; display: flex; flex-direction: row; align-items: center; width: 100%; max-width: 390px; gap: 12px; margin-top: 38px; }
 	.footer-line { flex: 1; height: 1px; background: var(--line); }
 	.footer-text { flex-shrink: 0; color: var(--muted); font-size: 11px; }

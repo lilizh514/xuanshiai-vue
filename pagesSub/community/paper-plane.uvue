@@ -42,8 +42,10 @@
 
 		<view class="quota-bar">
 			<view class="quota-copy">
-				<text class="q-label">扔纸飞机次数：{{ total - remain + purchasedThrowCount }}</text>
-				<text class="q-label">捡纸飞机次数：{{ catchCount }}</text>
+				<!-- 「可扔」以服务端 remain 为准；「已捡」是本地记录（服务端暂未下发该计数），
+				     两者不再相加混算，避免出现"服务器额度 + 本地自增"的怪异数字。 -->
+				<text class="q-label">今日可扔：{{ remain }} 次</text>
+				<text class="q-label">今日已捡：{{ catchCount }} 次</text>
 			</view>
 			<button class="quota-badge" @click="openPlaneQuota"><text>获取纸飞机</text></button>
 		</view>
@@ -307,7 +309,21 @@
 	import { sendPaperPlane, getCommunityQuotas, purchasePaperPlaneChance, replyPaperPlane, getPaperPlaneUnreadCount, createCommunityCreateKey, discardCommunityCreateKey, uploadCommunityMedia, deleteCommunityMedia } from '@/api'
 	import { guardRealName } from '@/utils/realNameGate.uts'
 
-	const PAPER_PLANE_PROFILE_STORAGE_KEY = 'xsa_paper_plane_profile_v1'
+	// 纸飞机身份必须按账号分键：旧版用全局 key，切换账号后会串出上一个账号的
+	// 昵称/头像/匿名状态，属于账号间数据泄漏。
+	const PAPER_PLANE_PROFILE_KEY_PREFIX = 'xsa_paper_plane_profile_v1:'
+	const LEGACY_PAPER_PLANE_PROFILE_KEY = 'xsa_paper_plane_profile_v1'
+	const paperPlaneStorageKey = (): string => {
+		let uid = 0
+		try {
+			const stored = uni.getStorageSync('xsa_user_id')
+			if (stored != null && stored != '') {
+				const parsed = Number(stored)
+				if (!isNaN(parsed) && parsed > 0) uid = parsed
+			}
+		} catch (e) {}
+		return PAPER_PLANE_PROFILE_KEY_PREFIX + (uid > 0 ? '' + uid : 'guest')
+	}
 	const PAPER_PLANE_DEFAULT_NICKNAME = '宣誓爱用户'
 	const paperPlaneRandomNames = ['云端旅人', '微光信使', '晚风邮差', '星河来信', '晴天收件人', '月光投递员']
 
@@ -394,7 +410,17 @@
 
 	const loadPaperPlaneProfile = () => {
 		try {
-			const saved = uni.getStorageSync(PAPER_PLANE_PROFILE_STORAGE_KEY) as any
+			let saved = uni.getStorageSync(paperPlaneStorageKey()) as any
+			if (saved == null || typeof saved !== 'object') {
+				// 兼容升级：仅当本账号还没有分键记录时，才把旧全局记录迁移过来一次，
+				// 迁移后立刻清掉全局键，避免下一个账号又读到同一条。
+				const legacy = uni.getStorageSync(LEGACY_PAPER_PLANE_PROFILE_KEY) as any
+				if (legacy != null && typeof legacy === 'object' && legacy.initialized == true) {
+					saved = legacy
+					uni.setStorageSync(paperPlaneStorageKey(), legacy)
+					uni.removeStorageSync(LEGACY_PAPER_PLANE_PROFILE_KEY)
+				}
+			}
 			if (saved == null || typeof saved !== 'object' || saved.initialized != true) return
 
 			const nickname = typeof saved.nickname === 'string' && saved.nickname.trim().length > 0
@@ -474,7 +500,7 @@
 		paperPlaneProfile.value.avatarType = paperPlaneProfileDraft.value.avatarType
 		paperPlaneProfile.value.initialized = true
 		try {
-			uni.setStorageSync(PAPER_PLANE_PROFILE_STORAGE_KEY, {
+			uni.setStorageSync(paperPlaneStorageKey(), {
 				nickname: paperPlaneProfile.value.nickname,
 				avatar: paperPlaneProfile.value.avatar,
 				avatarType: paperPlaneProfile.value.avatarType,

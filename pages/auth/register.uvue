@@ -214,6 +214,11 @@
 				title: '注册成功',
 				icon: 'success'
 			})
+			// 把注册时选的性别交给引导页：否则引导页 picker 默认取第一项"男"，
+			// 用户明明选了"女"，落库却还是"男"，编辑资料里就对不上。
+			try {
+				uni.setStorageSync('xsa_pending_gender', gender.value)
+			} catch (e) {}
 			setTimeout(() => {
 				uni.navigateTo({
 					url: '/pagesSub/userExtra/onboarding/profile'

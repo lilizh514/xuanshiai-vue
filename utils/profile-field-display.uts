@@ -74,8 +74,44 @@ export function cityNameByCode(code: any): string {
 	return ''
 }
 
-/** 标签数组 → 顿号连接（值多为中文标签本身，直接拼接）。 */
-function tagsText(value: any): string {
+/**
+ * 省/市/区编码 → "省 市 区" 展示串。
+ * 任一编码查不到时只退化到已有层级，**绝不把裸编码当名字返回**——
+ * 首页名片曾直接回显 city_code（如 110100），与编辑页的"北京市 市辖区 东城区"对不上。
+ */
+export function locationDisplayByCodes(provinceCode: any, cityCode: any, districtCode: any): string {
+	const provinceName = cityNameByCode(provinceCode)
+	const cityName = cityNameByCode(cityCode)
+	const districtName = cityNameByCode(districtCode)
+	const parts: string[] = []
+	if (provinceName != '') parts.push(provinceName)
+	if (cityName != '' && cityName != provinceName) parts.push(cityName)
+	if (districtName != '' && districtName != cityName) parts.push(districtName)
+	return parts.join(' ')
+}
+
+/**
+ * 收入数值 → 展示串（全站唯一口径）。
+ * 登录问卷存的是数值（50000/150000/400000/750000/1000000），必须反查回枚举文案；
+ * 首页曾单独实现成 "15w"，与详情页 "10-20w"、编辑页枚举三处不一致，这里统一。
+ */
+export function incomeDisplayText(raw: any): string {
+	if (raw == null) return '未填写'
+	const text = ('' + raw).trim()
+	if (text == '') return '未填写'
+	const amount = Number(text)
+	if (isNaN(amount)) return text.replace('万', 'w')
+	if (amount <= 0) return '未填写'
+	if (amount == 50000) return '小于10w'
+	if (amount == 150000) return '10-20w'
+	if (amount == 400000) return '30-50w'
+	if (amount == 750000) return '50-100w'
+	if (amount >= 1000000) return '100w以上'
+	const wan = Math.round(amount / 1000) / 10
+	return (wan % 1 == 0 ? '' + Math.round(wan) : '' + wan) + 'w'
+}
+
+/** 标签数组 → 顿号连接（值多为中文标签本身，直接拼接）。 */function tagsText(value: any): string {
 	if (Array.isArray(value)) {
 		const parts = value as any[]
 		const texts: string[] = []
