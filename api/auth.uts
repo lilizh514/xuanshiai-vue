@@ -7,6 +7,9 @@ import { request } from './request.uts'
 import { mockMeProfile } from '@/mock'
 import { CURRENT_USER_ID_KEY, USE_MOCK, buildApiUrl, getAccessToken, setAuthTokens, clearAuthTokens } from './config.uts'
 
+// 登录态自动续期入口（实现位于 request.uts，此处 re-export 供外部统一从 auth 模块引用）。
+export { refreshAccessToken } from './request.uts'
+
 const mockCertifications: any = {
   education: { kind: 'education', status: 0, material_submitted: false, submitted_at: null, reviewed_at: null, fail_reason: null, next_action: '提交认证材料' },
   house: { kind: 'house', status: 0, material_submitted: false, submitted_at: null, reviewed_at: null, fail_reason: null, next_action: '提交认证材料' },
@@ -109,6 +112,7 @@ export async function loginByExistingAccount(phone: string, password: string) {
   })
   if (res.success && res.data != null && res.data.access_token != null) {
     setAuthTokens(String(res.data.access_token), res.data.refresh_token != null ? String(res.data.refresh_token) : '')
+    if (res.data.user_id != null) uni.setStorageSync(CURRENT_USER_ID_KEY, res.data.user_id)
   }
   return res
 }

@@ -1,7 +1,7 @@
 /** 情感实验室 MBTI API 与跨端数据契约。 */
 
 import { request } from './request.uts'
-import { CURRENT_USER_ID_KEY, USE_MOCK, getAccessToken } from './config.uts'
+import { CURRENT_USER_ID_KEY, EMOTION_LAB_USE_MOCK, getAccessToken } from './config.uts'
 import {
   getEmotionLabSummaryData,
   startEmotionLabSessionData,
@@ -104,8 +104,8 @@ export type SetMyMbtiTypePayload = {
   resultId?: string
 }
 
-// 测试会话使用真实后端；只有项目显式启用 Mock 时才使用本地数据。
-export const EMOTION_LAB_USE_MOCK = USE_MOCK
+// 开关统一在 api/config.uts 管理（含「后端无 /emotion-lab 模块」的硬约束说明）。
+// 本文件不再自行声明，避免两处开关漂移。
 
 function readEmotionLabStorage(key: string): any {
   return uni.getStorageSync(key)
@@ -119,13 +119,39 @@ function removeEmotionLabStorage(key: string): void {
   uni.removeStorageSync(key)
 }
 
+/**
+ * 访客主体。
+ * 不能像登录用户那样用固定常量（会让同机不同游客共用一份测试状态），
+ * 这里按设备安装生成一次随机 id 并持久化：既不共享状态，也不用抛错阻断页面。
+ */
+const GUEST_SUBJECT_STORAGE_KEY = 'xsa_emotion_lab_guest_subject'
+
+function resolveGuestSubject(): string {
+  try {
+    const stored = uni.getStorageSync(GUEST_SUBJECT_STORAGE_KEY)
+    const existing = stored != null ? String(stored).trim() : ''
+    if (existing != '') return existing
+  } catch (error) {}
+  const generated = 'guest:' + Date.now() + '-' + Math.floor(Math.random() * 1000000)
+  try {
+    uni.setStorageSync(GUEST_SUBJECT_STORAGE_KEY, generated)
+  } catch (error) {}
+  return generated
+}
+
+/**
+ * 测试主体标识。
+ * 未登录时退化为本地访客主体，而不是抛错：情感实验室的题库与计分全在端侧，
+ * 未登录也应该能做题、看结果，只是不落到账号资料上（保存时再引导登录）。
+ * 旧实现直接 throw，导致未登录用户点进页面即整页「暂时无法加载」。
+ */
 function resolveEmotionLabSubject(): string {
   try {
     const storedUserId = uni.getStorageSync(CURRENT_USER_ID_KEY)
     const userId = storedUserId != null ? String(storedUserId).trim() : ''
     if (userId != '' && getAccessToken() != '') return 'user:' + userId
   } catch (error) {}
-  throw new Error('EMOTION_LAB_SUBJECT_REQUIRED: 请先登录后使用情感实验室')
+  return resolveGuestSubject()
 }
 
 function syncEmotionLabProfile(profileSource: any, subjectId: string): any {
@@ -168,6 +194,20 @@ export async function getEmotionLabSummary() {
     method: 'GET',
     mockData: null
   })
+}
+
+/**
+ * 端侧兜底快照：线上状态取不到时，页面仍要能进入自测流程（题库与计分都在端侧）。
+ * 与开关无关地可用——即使有人把 EMOTION_LAB_USE_MOCK 改成 false、
+ * 而后端又没有 /emotion-lab 模块，也只会降级成「本地题库 + 顶部提示」，不会整页不可用。
+ * 取不到时返回 null，由调用方决定是否展示致命错误。
+ */
+export function getEmotionLabOfflineSummary(): any {
+  try {
+    return getEmotionLabSummaryData()
+  } catch (error) {
+    return null
+  }
 }
 
 export async function startEmotionLabSession(assessmentId: string = 'mbti-core') {
@@ -219,6 +259,15 @@ export async function submitEmotionLabSession(sessionId: string, answers: MbtiAn
 }
 
 export async function setEmotionLabProfileSource(payload: SetMyMbtiTypePayload) {
+  // 访客主体没有账号可写，明确回业务错误，避免"看起来保存成功但没进资料"。
+  if (resolveEmotionLabSubject().indexOf('guest:') == 0) {
+    return {
+      success: false,
+      data: null,
+      code: 'EMOTION_LAB_SUBJECT_REQUIRED',
+      message: 'EMOTION_LAB_SUBJECT_REQUIRED: 请先登录后保存测试结果'
+    }
+  }
   if (EMOTION_LAB_USE_MOCK) {
     try {
       return ok(setEmotionLabProfileSourceData(payload))

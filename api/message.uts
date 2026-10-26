@@ -754,11 +754,19 @@ function currentChatUserId(): number {
   }
 }
 
+/**
+ * 后端 chat_message.type（建表注释）：
+ * 1 文本 / 2 图片 / 3 语音 / 4 视频 / 5 小程序卡片 / 6 系统消息。
+ * type=6 是「申请认识通过」时由后端自动写入的问候，必须单独识别，
+ * 否则会被当成对方发来的一条普通文本，既没有系统语义也破坏了对话归属。
+ */
 function chatMessageTypeFromBackend(value: any): string {
   const type = Number(value)
   if (type == 2) return 'image'
   if (type == 3) return 'voice'
   if (type == 4) return 'video'
+  if (type == 5) return 'card'
+  if (type == 6) return 'system'
   return 'text'
 }
 

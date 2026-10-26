@@ -53,6 +53,34 @@ function createMockOrder(target: SpotlightTarget): SpotlightPaymentOrder {
   return order
 }
 
+/**
+ * 免费额度爆灯（本轮前台入口走这条）。
+ * 后端 `POST /discovery/superlikes/{target_id}` 已完整可用：幂等键 + 每日额度
+ * （普通号默认 1 次/天、VIP 3 次/天，可由运营在 platform_permissions 覆盖）
+ * + 写 user_boost + 给对方发「收到爆灯」通知。
+ * 返回体：{ target_user_id, remaining_today, created_at }
+ *
+ * 与 paySpotlight 的区别：这条不涉及支付，履约由后端同步完成。
+ */
+export async function sendSuperlike(targetUserId: number, idempotencyKey: string = '') {
+  if (!(targetUserId > 0)) {
+    return { success: false, data: null, code: 400, message: '爆灯对象无效' }
+  }
+  // 后端要求 Idempotency-Key 长度 >= 8；同一对象重复点击应复用同一 key 以避免重复扣额度。
+  const key = idempotencyKey != '' ? idempotencyKey : 'sl-' + Date.now() + '-' + targetUserId
+  return request({
+    url: '/discovery/superlikes/' + targetUserId,
+    method: 'POST',
+    headers: { 'Idempotency-Key': key }
+  })
+}
+
+/**
+ * 付费爆灯（方案 B，本轮未启用）。
+ * ⚠️ 现状只创建订单、不履约：后端要再调 `POST /payments/test/pay` 才会写 user_boost
+ * 并通知对方（参考 api/top-placement.uts 的 payTopPlacement 两步式实现）。
+ * 另需先把后端写死的 5.00 与前端 9.9 的价格口径统一，否则用户看到的金额与实际订单不符。
+ */
 export async function paySpotlight(target: SpotlightTarget) {
   if (target == null || target.id <= 0 || target.name == '') {
     return { success: false, data: null, code: 400, message: '爆灯对象无效' }
@@ -64,6 +92,7 @@ export async function paySpotlight(target: SpotlightTarget) {
   return request({
     url: '/spotlights/payments',
     method: 'POST',
-    data: { target_user_id: target.id }
+    data: { target_user_id: target.id },
+    headers: { 'Idempotency-Key': 'spotlight-' + Date.now() + '-' + target.id }
   })
 }

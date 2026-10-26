@@ -641,14 +641,28 @@ async function run() {
   assert.strictEqual(discarded.status, 'discarded')
 
   const api = fs.readFileSync(apiPath, 'utf8')
-  assert.ok(api.includes('export const EMOTION_LAB_USE_MOCK = USE_MOCK'), 'API must follow the explicit project data-mode boundary')
+  // 2026-10-26：开关迁到 api/config.uts 集中管理（后端无 /emotion-lab 模块，
+  // 必须保持 true）。这里改判「从 config 引入」而非「本文件声明」。
+  const apiConfig = fs.readFileSync(path.join(__dirname, '..', 'api', 'config.uts'), 'utf8')
+  assert.ok(
+    apiConfig.includes('export const EMOTION_LAB_USE_MOCK = true'),
+    'config.uts should own the emotion-lab mock boundary'
+  )
+  assert.ok(
+    /import\s*\{[^}]*EMOTION_LAB_USE_MOCK[^}]*\}\s*from\s*['"]\.\/config\.uts['"]/.test(api),
+    'emotionLab API should consume the mock boundary from config.uts'
+  )
   assert.ok(api.includes('configureEmotionLabMockRuntime'), 'API should configure the cross-platform storage boundary')
   assert.ok(
     api.includes('uni.getStorageSync(CURRENT_USER_ID_KEY)'),
     'API should resolve emotion state from the shared authenticated user id key'
   )
   assert.ok(api.includes('syncMockMeMbtiProfileData'), 'API should use the unified Mock user profile writer')
-  assert.ok(api.includes('EMOTION_LAB_SUBJECT_REQUIRED'), 'API should fail closed when xsa_user_id is missing')
+  // 2026-10-26：未登录不再整页报错，改为「访客主体可做题，保存时才要求登录」。
+  assert.ok(
+    api.includes('resolveGuestSubject'),
+    'API should degrade to a per-device guest subject instead of throwing'
+  )
   assert.ok(!api.includes("return 'mock-user:9001'"), 'API must not share a fixed fallback subject across accounts')
   assert.match(
     api,

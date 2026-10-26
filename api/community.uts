@@ -763,12 +763,52 @@ export function getFixedCommunityBanner(): any {
   }
 }
 
+/** 发现页固定话题位：后端 config_banner 未配置 topic 时的本地兜底。 */
+export function getFixedTopicBanner(): any {
+  return {
+    id: -1002,
+    type: 'topic',
+    title: '热门话题',
+    subtitle: '正在讨论的认真关系',
+    description: '看看大家在认真聊什么',
+    cta: '全部话题',
+    kicker: 'TOPIC',
+    cover: '',
+    targetId: 0,
+    isFixed: true
+  }
+}
+
+/** 发现页固定活动位：后端 config_banner 未配置 activity 时的本地兜底。 */
+export function getFixedActivityBanner(): any {
+  return {
+    id: -1003,
+    type: 'activity',
+    title: '线下活动',
+    subtitle: '同城小规模见面',
+    description: '先看活动规则，再决定是否报名',
+    cta: '查看活动',
+    kicker: 'OFFLINE',
+    cover: '',
+    targetId: 0,
+    isFixed: true
+  }
+}
+
 export function ensureCommunityBanners(list: any[]): any[] {
   const next: any[] = list != null ? list.slice() : []
-  for (let i = 0; i < next.length; i++) {
-    if (next[i] != null && next[i].type == 'plane') return next
+  const hasType = (type: string): boolean => {
+    for (let i = 0; i < next.length; i++) {
+      const b = next[i]
+      if (b != null && b.type != null && ('' + b.type) == type) return true
+    }
+    return false
   }
-  next.push(getFixedCommunityBanner())
+  // 只补缺、不删多余：排序与同 type 去重仍由 community.uvue 的 loadBanners 负责。
+  // 补位条目一律追加在数组末尾，页面层按 order 查找时后端真实配置优先命中。
+  if (!hasType('plane')) next.push(getFixedCommunityBanner())
+  if (!hasType('topic')) next.push(getFixedTopicBanner())
+  if (!hasType('activity')) next.push(getFixedActivityBanner())
   return next
 }
 

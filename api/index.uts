@@ -19,7 +19,8 @@ export {
   getUserCertifications,
   submitEducationCertification,
   submitSinglePledgeCertification,
-  logout
+  logout,
+  refreshAccessToken
 } from './auth.uts'
 
 // 用户相关
@@ -170,6 +171,7 @@ export type {
 // 情感实验室相关
 export {
   getEmotionLabSummary,
+  getEmotionLabOfflineSummary,
   getEmotionLabMatches,
   startMbtiAssessment,
   saveMbtiAnswer,
@@ -215,6 +217,8 @@ export {
   getMyActivities,
   getCommunityBanners,
   getFixedCommunityBanner,
+  getFixedTopicBanner,
+  getFixedActivityBanner,
   ensureCommunityBanners,
   getCommunityNotifications,
   getOfficialCommunityActivities,
@@ -304,6 +308,7 @@ export {
 // 爆灯相关
 export {
   SPOTLIGHT_AMOUNT,
+  sendSuperlike,
   paySpotlight
 } from './spotlight.uts'
 

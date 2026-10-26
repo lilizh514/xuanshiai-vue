@@ -102,6 +102,32 @@
 						<view class="section-heading-row"><text class="vip-section-title">Ta的动态</text><text class="section-more">查看全部 ›</text></view>
 						<view v-for="item in dynamics" :key="item.id" class="dynamic-card"><view class="dynamic-user-row"><image class="dynamic-avatar" :src="user.avatar" mode="aspectFill"></image><view class="dynamic-user-copy"><text class="dynamic-name">{{ user.name }}</text><text class="dynamic-time">{{ item.time }}</text></view></view><text class="dynamic-content">{{ item.content }}</text><image v-if="item.photo != ''" class="dynamic-photo" :src="item.photo" mode="aspectFill"></image><view class="dynamic-footer"><text class="dynamic-topic">{{ item.topic }}</text><text class="dynamic-count">♡ {{ item.likes }}　◌ {{ item.comments }}</text></view></view>
 					</view>
+
+					<!-- 爆灯：名片下方。免费额度制，不涉及支付；理由仅本地展示。
+					     自己的名片、预览态、红娘代看都不展示。 -->
+					<view class="vip-section-card spotlight-card" v-if="!isOwnProfile && !isPreview && !fromMatchmaker">
+						<view class="spotlight-head">
+							<text class="spotlight-title">为 Ta 爆灯</text>
+							<text class="spotlight-remain" v-if="spotlightRemaining > 0">今日还剩 {{ spotlightRemaining }} 次</text>
+							<text class="spotlight-remain" v-else-if="spotlightRemaining == 0">今日次数已用完</text>
+						</view>
+						<text class="spotlight-desc">让 Ta 在消息列表里更早看到你 · 不代替申请认识</text>
+						<view class="spotlight-reasons">
+							<view
+								v-for="reason in SPOTLIGHT_REASONS"
+								:key="reason"
+								class="spotlight-reason"
+								:class="{ 'spotlight-reason-active': reason == spotlightReason }"
+								@tap="spotlightReason = reason"
+							>
+								<text class="spotlight-reason-text">{{ reason }}</text>
+							</view>
+						</view>
+						<view class="spotlight-button" :class="{ 'spotlight-button-disabled': !canSpotlight }" @tap="onSpotlight">
+							<text class="spotlight-button-text">{{ spotlightButtonText }}</text>
+						</view>
+						<text class="spotlight-error" v-if="spotlightError != ''">{{ spotlightError }}</text>
+					</view>
 				</view>
 			</view>
 
@@ -163,6 +189,31 @@
 						</view>
 					</view>
 
+					<!-- 爆灯：锁定态同样保留入口（未开 VIP 也能爆灯）。 -->
+					<view class="locked-section-card spotlight-card" v-if="!isOwnProfile && !isPreview && !fromMatchmaker">
+						<view class="spotlight-head">
+							<text class="spotlight-title">为 Ta 爆灯</text>
+							<text class="spotlight-remain" v-if="spotlightRemaining > 0">今日还剩 {{ spotlightRemaining }} 次</text>
+							<text class="spotlight-remain" v-else-if="spotlightRemaining == 0">今日次数已用完</text>
+						</view>
+						<text class="spotlight-desc">让 Ta 在消息列表里更早看到你 · 不代替申请认识</text>
+						<view class="spotlight-reasons">
+							<view
+								v-for="reason in SPOTLIGHT_REASONS"
+								:key="reason"
+								class="spotlight-reason"
+								:class="{ 'spotlight-reason-active': reason == spotlightReason }"
+								@tap="spotlightReason = reason"
+							>
+								<text class="spotlight-reason-text">{{ reason }}</text>
+							</view>
+						</view>
+						<view class="spotlight-button" :class="{ 'spotlight-button-disabled': !canSpotlight }" @tap="onSpotlight">
+							<text class="spotlight-button-text">{{ spotlightButtonText }}</text>
+						</view>
+						<text class="spotlight-error" v-if="spotlightError != ''">{{ spotlightError }}</text>
+					</view>
+
 				</view>
 			</view>
 
@@ -206,7 +257,6 @@
 			</view>
 
 		<XsaApplySheet :visible="applyVisible" :user-id="applyUserId" @close="applyVisible = false" @success="onApplySuccess" />
-		<XsaPaymentSheet :visible="spotlightPaymentVisible" :amount="SPOTLIGHT_AMOUNT" :loading="spotlightPaying" confirm-text="确认支付爆灯" notice="爆灯 9.9 元/次：确认后展示爆灯成功状态。" @close="closeSpotlightPayment" @confirm="confirmSpotlightPayment" />
 		<XsaSpotlightSuccessSheet :visible="spotlightSuccessVisible" :target="spotlightTarget" @close="closeSpotlightSuccess" />
 
 		<XsaAiMatchSheet
@@ -232,7 +282,6 @@
 <script setup lang="uts">
 import { ref, computed } from 'vue'
 import XsaApplySheet from '@/components/XsaApplySheet.uvue'
-import XsaPaymentSheet from '@/components/XsaPaymentSheet.uvue'
 import XsaSpotlightSuccessSheet from '@/components/XsaSpotlightSuccessSheet.uvue'
 import XsaAiMatchSheet from '@/components/XsaAiMatchSheet.uvue'
 import XsaAiCatBubble from '@/components/XsaAiCatBubble.uvue'
@@ -241,7 +290,7 @@ import XsaZhiyuHub from '@/components/XsaZhiyuHub.uvue'
 import { getUserDetail, likeUser, getOwnProfile, getMyPosts, getMembershipStatus, getUserVisitorCount, saveAiAvatarProfileSnapshot, getDynamicList, getPortraitNarrative } from '@/api'
 import { resolveMediaUrl, getAccessToken } from '@/api/config.uts'
 import locationJson from '@/data/location.json'
-import { SPOTLIGHT_AMOUNT, paySpotlight } from '@/api/spotlight.uts'
+import { sendSuperlike } from '@/api/spotlight.uts'
 import { guardRealName } from '@/utils/realNameGate.uts'
 import { incomeDisplayText, locationDisplayByCodes } from '@/utils/profile-field-display.uts'
 import { recordProfileView, rollbackProfileView } from '@/utils/quota.uts'
@@ -262,10 +311,15 @@ const detailError = ref('')
 const detailQuotaExhausted = ref(false)
 const applyVisible = ref(false)
 const applyUserId = ref(1)
-const spotlightPaymentVisible = ref(false)
 const spotlightSuccessVisible = ref(false)
-const spotlightPaying = ref(false)
 const spotlightTarget = ref({ id: 0, name: '', avatar: '', meta: '' })
+// 免费额度爆灯：理由仅本地展示（后端 superlike 无 reason 字段），剩余次数取接口回包。
+const SPOTLIGHT_REASONS: string[] = ['真诚欣赏', '条件契合', '想认识一下']
+const spotlightReason = ref('真诚欣赏')
+const spotlightRemaining = ref(-1)
+const spotlightSending = ref(false)
+const spotlightDone = ref(false)
+const spotlightError = ref('')
 const visitorCount = ref<number | null>(null)
 
 const user = ref({
@@ -828,35 +882,77 @@ const onZhiyuHubSelect = (key: string) => {
 		})
 	}
 }
-const onSpotlight = () => {
-	if (isOwnProfile.value) {
-		uni.showToast({ title: '不能向自己爆灯', icon: 'none' })
-		return
-	}
-	if (spotlightPaying.value) return
-	spotlightTarget.value = { id: Number(user.value.id), name: '' + user.value.name, avatar: '' + user.value.avatar, meta: '' + user.value.age + '岁 · ' + user.value.job }
-	spotlightPaymentVisible.value = true
-}
-const closeSpotlightPayment = () => { if (!spotlightPaying.value) spotlightPaymentVisible.value = false }
+/** 爆灯按钮是否可点：本人/预览态不展示，发送中、今日额度用完、本次已送出都不可点。 */
+const canSpotlight = computed((): boolean => {
+	if (isOwnProfile.value || isPreview.value) return false
+	if (spotlightSending.value || spotlightDone.value) return false
+	if (spotlightRemaining.value == 0) return false
+	return true
+})
+
+const spotlightButtonText = computed((): string => {
+	if (spotlightSending.value) return '发送中...'
+	if (spotlightDone.value) return '爆灯已送出'
+	if (spotlightRemaining.value == 0) return '今日爆灯次数已用完'
+	if (spotlightRemaining.value > 0) return '我要爆灯 · 今日还剩 ' + spotlightRemaining.value + ' 次'
+	return '我要爆灯'
+})
+
 const closeSpotlightSuccess = () => {
 	spotlightSuccessVisible.value = false
 	spotlightTarget.value = { id: 0, name: '', avatar: '', meta: '' }
 }
-const confirmSpotlightPayment = async () => {
-	if (spotlightPaying.value) return
-	spotlightPaying.value = true
+
+/**
+ * 免费额度爆灯：走 POST /discovery/superlikes/{id}，额度扣减与「收到爆灯」通知都在后端完成，
+ * 前端不做支付、也不做二次履约。额度默认普通号 1 次/天、VIP 3 次/天。
+ */
+// 幂等键在本页实例内复用：网络超时重试时复用同一 key，避免后端已落库却被再扣一次额度。
+// 页面实例 = 一个爆灯对象（详情页按目标用户新开页面栈），所以这个粒度是正确的。
+let spotlightRequestKey = ''
+
+const onSpotlight = async () => {
+	if (isOwnProfile.value) {
+		uni.showToast({ title: '不能向自己爆灯', icon: 'none' })
+		return
+	}
+	if (!canSpotlight.value) return
+	const targetId = Number(user.value.id)
+	if (!(targetId > 0)) return
+	spotlightSending.value = true
+	spotlightError.value = ''
+	spotlightTarget.value = { id: targetId, name: '' + user.value.name, avatar: '' + user.value.avatar, meta: '' + user.value.age + '岁 · ' + user.value.job }
+	if (spotlightRequestKey == '') spotlightRequestKey = 'sl-' + Date.now() + '-' + targetId
 	try {
-		const res = await paySpotlight(spotlightTarget.value)
+		const res = await sendSuperlike(targetId, spotlightRequestKey)
 		if (res.success !== true) {
-			uni.showToast({ title: res.message != null ? '' + res.message : '支付失败，请重试', icon: 'none' })
+			const message = res != null && res.message != null ? '' + res.message : ''
+			const status = res != null && res.code != null ? Number(res.code) : 0
+			// 后端额度耗尽返回 429「今日爆灯次数已用完」，顺手把本地次数归零，按钮立即置灰。
+			if (status == 429 || message.indexOf('用完') >= 0) {
+				spotlightRemaining.value = 0
+				spotlightError.value = '今日爆灯次数已用完'
+			} else if (message.indexOf('实名') >= 0) {
+				spotlightError.value = '爆灯需要先完成实名认证'
+			} else if (message != '') {
+				spotlightError.value = message
+			} else {
+				spotlightError.value = '爆灯发送失败，请稍后重试'
+			}
+			uni.showToast({ title: spotlightError.value, icon: 'none' })
 			return
 		}
-		spotlightPaymentVisible.value = false
+		const data = res.data
+		if (data != null && data.remaining_today != null) {
+			spotlightRemaining.value = Number(data.remaining_today)
+		}
+		spotlightDone.value = true
 		spotlightSuccessVisible.value = true
 	} catch (e) {
-		uni.showToast({ title: '网络异常，支付未完成', icon: 'none' })
+		spotlightError.value = '网络异常，爆灯未发送'
+		uni.showToast({ title: spotlightError.value, icon: 'none' })
 	} finally {
-		spotlightPaying.value = false
+		spotlightSending.value = false
 	}
 }
 const openVipUnlock = () => {
@@ -1042,8 +1138,28 @@ const onLike = async () => {
 .spot-price { display: flex; flex-direction: row; align-items: baseline; justify-content: center; gap: 10rpx; }
 .spot-price-label, .spot-price-unit { color: var(--ink2); font-size: 23rpx; }
 .spot-price-value { color: var(--ink); font-family: var(--serif); font-size: 40rpx; font-weight: 800; }
-.spotlight-button { display: flex; align-items: center; justify-content: center; height: 88rpx; border-radius: 44rpx; background-color: var(--plane-yellow); }
-.spotlight-button-text { color: var(--ink); font-size: 28rpx; font-weight: 700; }
+/* 爆灯卡片：沿用名片页青瓷绿家族（--sage / --sage-soft），与已上线的
+   XsaSpotlightSuccessSheet 同源；比底部「申请认识」实心绿更轻，符合「爆灯不做主路径」。 */
+.spotlight-card { display: flex; flex-direction: column; gap: 16rpx; }
+.spotlight-head { display: flex; flex-direction: row; align-items: center; justify-content: space-between; }
+.spotlight-title { color: var(--ink); font-size: 30rpx; font-weight: 700; }
+.spotlight-remain { color: var(--sage); font-size: 22rpx; font-weight: 600; }
+.spotlight-desc { color: var(--muted); font-size: 22rpx; line-height: 1.5; }
+.spotlight-reasons { display: flex; flex-direction: row; flex-wrap: wrap; gap: 12rpx; }
+.spotlight-reason {
+	display: flex; align-items: center; justify-content: center;
+	padding: 8rpx 20rpx; border-radius: 999rpx;
+	background-color: var(--canvas);
+	border: 1rpx solid var(--line);
+}
+.spotlight-reason-active { background-color: var(--sage-soft); border-color: var(--sage-soft); }
+.spotlight-reason-text { color: var(--muted); font-size: 22rpx; }
+.spotlight-reason-active .spotlight-reason-text { color: var(--sage); font-weight: 700; }
+.spotlight-button { display: flex; align-items: center; justify-content: center; height: 88rpx; border-radius: 44rpx; background-color: var(--sage-soft); }
+.spotlight-button-text { color: var(--sage); font-size: 28rpx; font-weight: 700; }
+.spotlight-button-disabled { background-color: var(--warm); }
+.spotlight-button-disabled .spotlight-button-text { color: var(--muted); }
+.spotlight-error { color: var(--match-coral); font-size: 22rpx; line-height: 1.5; }
 .scroll-bottom-spacer { height: 420rpx; }
 .spacer-matchmaker { height: 560rpx; }
 

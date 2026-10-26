@@ -80,7 +80,13 @@
 						<text class="time-text">{{ message.time }}</text>
 					</view>
 
-					<view class="message-wrapper" :class="message.isMine ? 'mine' : 'other'">
+					<!-- 系统消息（后端 type=6）：申请认识通过时自动写入的问候。
+					     居中浅底、无头像、无气泡尾，也不参与长按撤回/引用。 -->
+					<view class="system-divider" v-if="message.type === 'system'">
+						<text class="system-divider-text">{{ message.content }}</text>
+					</view>
+
+					<view class="message-wrapper" v-else :class="message.isMine ? 'mine' : 'other'">
 						<view
 							class="avatar protected-avatar"
 							v-if="!message.isMine && isParentMode"
@@ -1489,6 +1495,25 @@
 		.message-wrapper.mine .message-bubble { background: var(--accent); color: var(--text-invert); }
 		.text-content { font-size: 15px; line-height: 1.4; }
 		.protected-content-text { color: var(--muted); font-size: 13px; line-height: 1.5; }
+
+	/* 系统消息：居中浅底小字，视觉权重低于普通气泡，不抢对话内容。 */
+	.system-divider {
+		display: flex;
+		flex-direction: row;
+		justify-content: center;
+		padding: 6px 40px;
+	}
+
+	.system-divider-text {
+		max-width: 100%;
+		padding: 5px 12px;
+		border-radius: 8px;
+		background-color: var(--warm);
+		color: var(--muted);
+		font-size: 12px;
+		line-height: 1.5;
+		text-align: center;
+	}
 
 	.message-status { margin-top: 4px; font-size: 11px; }
 	.message-status.failed { color: var(--accent2); }

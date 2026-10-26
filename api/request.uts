@@ -10,6 +10,8 @@ import {
   MOCK_DELAY,
   CURRENT_USER_ID_KEY,
   getAccessToken,
+  getRefreshToken,
+  setAuthTokens,
   clearAuthTokens,
   ONBOARDING_MODE_KEY,
   ONBOARDING_COMPLETED_KEY,
@@ -117,22 +119,102 @@ function extractHeaderRequestId(res: any): string {
   return ''
 }
 
+// —— 登录态自动续期 ——
+// 单飞缓存：并发 401 共用同一次刷新，避免用同一旧 refresh_token 连打两次
+// （后端刷新为 rotation，旧 refresh_token 成功后立即作废，第二次必 401）。
+let refreshingPromise: Promise<any> | null = null
+
+/**
+ * 用 refresh_token 换新 access_token。原生 uni.request 直连，不走 request 封装，
+ * 防止刷新请求自身再触发 401 续期造成递归。
+ */
+function doRefresh(): Promise<any> {
+  const refreshToken = getRefreshToken()
+  if (refreshToken == '') return Promise.resolve({ success: false, code: 401 })
+  return new Promise((resolve) => {
+    uni.request({
+      url: buildApiUrl('/auth/refresh'),
+      method: 'POST',
+      header: { 'Content-Type': 'application/json' },
+      data: { refresh_token: refreshToken },
+      success: (res: any) => {
+        const status = res.statusCode != null ? Number(res.statusCode) : 0
+        const raw = res.data
+        if (status >= 200 && status < 300 && raw != null && raw.access_token != null) {
+          setAuthTokens('' + raw.access_token, raw.refresh_token != null ? '' + raw.refresh_token : '')
+          if (raw.user_id != null) {
+            try { uni.setStorageSync(CURRENT_USER_ID_KEY, raw.user_id) } catch (e) {}
+          }
+          resolve({ success: true, code: status })
+        } else {
+          resolve({ success: false, code: status })
+        }
+      },
+      fail: () => resolve({ success: false, code: -1 })
+    })
+  })
+}
+
+function refreshOnce(): Promise<any> {
+  if (refreshingPromise == null) {
+    refreshingPromise = doRefresh().finally(() => { refreshingPromise = null })
+  }
+  return refreshingPromise
+}
+
+/** 对外手动刷新入口（供 auth.uts re-export 或未来主动续期场景复用）。 */
+export async function refreshAccessToken(): Promise<any> {
+  return refreshOnce()
+}
+
+/**
+ * FastAPI 的 404/405 等默认响应体是 `{"detail":"Not Found"}` 这类英文短语，
+ * 直接上屏会变成「暂时无法加载 / Not Found」，既有实现细节泄漏也不好懂。
+ * 这里只做「已知框架短语」的中文归一，业务 message 一律原样保留。
+ */
+function normalizeFrameworkText(raw: string): string {
+  const text = raw != null ? raw.trim() : ''
+  if (text == '') return ''
+  const key = text.toLowerCase()
+  if (key == 'not found') return '服务暂时不可用，请稍后重试'
+  if (key == 'internal server error') return '服务开小差了，请稍后重试'
+  if (key == 'method not allowed') return '请求方式不被支持'
+  if (key == 'bad request') return '请求参数有误'
+  if (key == 'unauthorized') return '登录状态已失效，请重新登录'
+  if (key == 'forbidden') return '暂无操作权限'
+  if (key == 'unprocessable entity') return '提交内容不完整'
+  return text
+}
+
+/** 校验类 detail（FastAPI 422）逐项是 {type, loc, msg}，msg 仍是英文，按 type 归类。 */
+function validationMessage(item: any): string {
+  if (item == null) return ''
+  const type = item.type != null ? ('' + item.type).toLowerCase() : ''
+  if (type == 'missing') return '提交内容不完整'
+  if (type == 'string_too_short' || type == 'too_short') return '填写内容过短'
+  if (type == 'string_too_long' || type == 'too_long') return '填写内容过长'
+  if (type == 'greater_than_equal' || type == 'less_than_equal' || type == 'greater_than' || type == 'less_than') return '数值超出允许范围'
+  if (type.indexOf('int') == 0 || type.indexOf('float') == 0 || type.indexOf('decimal') == 0) return '请填写有效的数字'
+  return item.msg != null ? normalizeFrameworkText('' + item.msg) : ''
+}
+
 function extractDetail(data: any): string {
   if (data == null) return '请求失败'
-  if (typeof data === 'string') return data
+  if (typeof data == 'string') return normalizeFrameworkText(data)
   if (data.detail != null) {
-    if (typeof data.detail === 'string') return data.detail
+    if (typeof data.detail === 'string') return normalizeFrameworkText(data.detail)
     if (Array.isArray(data.detail) && data.detail.length > 0) {
       const first = data.detail[0]
-      if (first != null && first.msg != null) return '' + first.msg
-      return JSON.stringify(data.detail)
+      const localized = validationMessage(first)
+      if (localized != '') return localized
+      return '提交内容不完整'
     }
     // 对象形态的 detail：优先取后端给出的 message，别再回落到「请求失败」
     if (typeof data.detail === 'object' && data.detail.message != null) {
       return '' + data.detail.message
     }
   }
-  if (data.message != null) return '' + data.message
+  if (data.message != null) return normalizeFrameworkText('' + data.message)
   return '请求失败'
 }
 
@@ -199,7 +281,7 @@ async function httpRequest(options: any) {
       data: body,
       header: headers,
       timeout: timeout,
-      success: (res: any) => {
+      success: async (res: any) => {
         if (accountChanged()) { resolve(staleResponse()); return }
         const status = res.statusCode != null ? (res.statusCode as number) : 0
         const raw = res.data
@@ -217,6 +299,19 @@ async function httpRequest(options: any) {
           return
         }
         if (status == 401) {
+          // 会话过期：先尝试静默续期并重放一次；刷新请求自身(skipAuth) / 已重放过，
+          // 不再刷新，避免递归与死循环。
+          if (options.skipAuth != true && options.__retried != true) {
+            try {
+              const refreshed = await refreshOnce()
+              if (refreshed != null && refreshed.success === true) {
+                resolve(await httpRequest({ ...options, __retried: true }))
+                return
+              }
+            } catch (e) {
+              // 刷新异常视同失败，继续走清凭证。
+            }
+          }
           // 401 = 会话过期，不是新账号：清凭证，但保留已完成的引导状态，
           // 避免用户重登后被重新推回 onboarding（parent 模式还会丢路由依据）。
           const preserved = snapshotOnboardingState()

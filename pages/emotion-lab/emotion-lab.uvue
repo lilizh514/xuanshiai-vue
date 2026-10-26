@@ -6,13 +6,17 @@
 				<text class="state-message">正在读取你的测试状态</text>
 			</view>
 
-			<view v-else-if="errorMessage != ''" class="state-block">
+			<view v-else-if="fatalError != ''" class="state-block">
 				<text class="state-title">暂时无法加载</text>
-				<text class="state-message">{{ errorMessage }}</text>
+				<text class="state-message">{{ fatalError }}</text>
 				<button class="retry-button" @click="loadSummary">重试</button>
 			</view>
 
 			<view v-else-if="viewState == 'intro'" class="lab-content" :class="{ 'lab-content-mint': !hasTestedType }">
+				<view v-if="noticeMessage != ''" class="notice-banner">
+					<text class="notice-text">{{ noticeMessage }}</text>
+					<text class="notice-action" @click="loadSummary">重试</text>
+				</view>
 				<text class="guide-text">探索你的人格特质，找到同频合拍的人</text>
 
 			<view v-if="hasTestedType" class="result-card">
@@ -367,6 +371,7 @@
 	import XsaAvatar from '@/components/XsaAvatar.uvue'
 	import {
 		getEmotionLabSummary,
+		getEmotionLabOfflineSummary,
 		getEmotionLabMatches,
 		startMbtiAssessment,
 		saveMbtiAnswer,
@@ -385,6 +390,9 @@
 	const matchesError = ref('')
 	const matchesUnavailable = ref(false)
 	const errorMessage = ref('')
+	// fatalError：连端侧兜底都拿不到，只能整页不可用；noticeMessage：可恢复提示，内容照常可用。
+	const fatalError = ref('')
+	const noticeMessage = ref('')
 	const summary = ref(null as any)
 	const viewState = ref('intro')
 	const currentQuestionIndex = ref(0)
@@ -951,6 +959,31 @@
 		return res != null && res.message != null ? '' + res.message : fallback
 	}
 
+	/**
+	 * 面向用户的错误文案归一。
+	 * 约束：业务码（SESSION_ALREADY_ACTIVE 等）剥掉英文前缀后照常展示，
+	 * 框架/HTTP 短语（Not Found、Internal Server Error、request:fail）一律换成人话，
+	 * 不允许出现「暂时无法加载 / Not Found」这种把实现细节直接上屏的情况。
+	 */
+	const friendlyErrorMessage = (res: any, fallback: string): string => {
+		const code = res != null && res.code != null ? ('' + res.code) : ''
+		if (code.indexOf('EMOTION_LAB_SUBJECT_REQUIRED') >= 0) return '请先登录后再保存测试结果'
+		const raw = res != null && res.message != null ? ('' + res.message).trim() : ''
+		const lower = raw.toLowerCase()
+		if (lower.indexOf('not found') >= 0 || lower.indexOf('internal server error') >= 0) {
+			return '服务暂时不可用，已切换到本地数据'
+		}
+		if (lower.indexOf('request:fail') >= 0 || lower.indexOf('timeout') >= 0 || lower.indexOf('network') >= 0) {
+			return '网络不稳定，已切换到本地数据'
+		}
+		if (code != '' && code != 'EMOTION_LAB_ERROR' && raw != '') {
+			const separator = raw.indexOf(':')
+			if (separator > 0 && separator + 1 < raw.length) return raw.slice(separator + 1).trim()
+			return raw
+		}
+		return fallback
+	}
+
 	const applySessionSnapshot = (session: any) => {
 		if (summary.value != null) summary.value.activeSession = session
 	}
@@ -1001,19 +1034,33 @@
 
 	const loadSummary = async () => {
 		loading.value = true
-		errorMessage.value = ''
+		fatalError.value = ''
+		noticeMessage.value = ''
 		try {
 			const res = await getEmotionLabSummary()
 			if (res.success == true && res.data != null) {
 				summary.value = res.data
 				if (res.data.profileSource != null) selectedType.value = res.data.profileSource.mbtiType
 			} else {
-				errorMessage.value = responseMessage(res, '请稍后重试')
+				// 请求失败不再整页不可用：降级到端侧题库，只在顶部提示一句。
+				noticeMessage.value = friendlyErrorMessage(res, '暂时读取不到线上测试状态')
 			}
 		} catch (error) {
-			errorMessage.value = '请稍后重试'
+			noticeMessage.value = '网络不稳定，已切换到本地数据'
 		} finally {
 			loading.value = false
+		}
+		// 线上状态拿不到时用端侧快照兜底：题库与计分全在端侧，没理由因为一次
+		// 网络失败就把「开始测试」一起废掉。只有连端侧都取不到才算致命错误。
+		if (summary.value == null) {
+			const offline = getEmotionLabOfflineSummary()
+			if (offline != null) {
+				summary.value = offline
+				if (noticeMessage.value == '') noticeMessage.value = '当前使用本地题库，结果暂未同步到账号'
+			} else {
+				fatalError.value = '情感实验室暂时不可用，请稍后重试'
+				noticeMessage.value = ''
+			}
 		}
 		await loadMatches()
 	}
@@ -1430,6 +1477,31 @@
 		line-height: 1.6;
 		color: var(--lab-text-3);
 		text-align: center;
+	}
+
+	/* 可恢复提示条：线上状态读不到时降级到端侧题库，用浅绿提示一句，不占整页。 */
+	.notice-banner {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		padding: 10px 14px;
+		border-radius: 12px;
+		background-color: var(--lab-accent-soft);
+	}
+
+	.notice-text {
+		flex: 1;
+		font-size: 12px;
+		line-height: 1.5;
+		color: var(--lab-accent-dark);
+	}
+
+	.notice-action {
+		margin-left: 12px;
+		font-size: 12px;
+		font-weight: 700;
+		color: var(--lab-accent-dark);
 	}
 
 	.safe-area {

@@ -5,6 +5,7 @@ const path = require('path')
 const root = path.resolve(__dirname, '..')
 const requestSource = fs.readFileSync(path.join(root, 'api', 'request.uts'), 'utf8')
 const configSource = fs.readFileSync(path.join(root, 'api', 'config.uts'), 'utf8')
+const authSource = fs.readFileSync(path.join(root, 'api', 'auth.uts'), 'utf8')
 const appSource = fs.readFileSync(path.join(root, 'App.uvue'), 'utf8')
 
 assert.match(requestSource, /uni\.request\s*\(/, 'real requests must use uni.request')
@@ -34,5 +35,12 @@ assert.match(appSource, /setAuthTokens\(FASTAPI_DEV_ACCESS_TOKEN\)/, 'startup mu
 assert.match(appSource, /getAccessToken\(\) != FASTAPI_DEV_ACCESS_TOKEN/, 'startup must verify that the backend token was persisted')
 assert.match(appSource, /uni\.setStorageSync\('xsa_user_id', FASTAPI_DEV_USER_ID\)/, 'startup must persist the matching backend user id')
 assert.match(appSource, /uni\.switchTab\(\{[\s\S]*?url: '\/pages\/community\/community'/, 'startup must enter the community tab')
+
+// —— 登录态自动续期（2026-10-25）——
+assert.match(configSource, /export function getRefreshToken/, 'config must expose the refresh-token reader')
+assert.match(requestSource, /\/auth\/refresh/, 'silent renewal must call /auth/refresh')
+assert.match(requestSource, /refreshingPromise/, 'renewal must single-flight concurrent 401s')
+assert.match(requestSource, /__retried/, 'renewal must retry at most once')
+assert.match(authSource, /refreshAccessToken/, 'auth module must expose the renewal entry')
 
 console.log('PASS FastAPI request transport contract')

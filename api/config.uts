@@ -4,6 +4,13 @@ export const USE_MOCK = false
 export const API_BASE_URL = 'https://xhztest.xyz'
 export const ROLE_APPLICATION_USE_MOCK = false
 export const PAPER_PLANE_CHANCE_USE_MOCK = true
+
+// 情感实验室（MBTI）开关集中在此管理。
+// 后端 app/api/router.py 目前没有任何 /emotion-lab/* 路由，真实调用一律 404
+// （服务器实测返回 {"detail":"Not Found"}，表现为整页「暂时无法加载」）。
+// 除非后端补齐 summary/sessions/answers/submit/profile-source/discard/matches，
+// 否则必须保持 true。tests/test-emotion-lab-offline.js 会守住这一行。
+export const EMOTION_LAB_USE_MOCK = true
 export const LAN_API_BASE_URL = 'https://xhztest.xyz'
 
 // FastAPI mounts its router directly at /api/v1.
@@ -42,6 +49,20 @@ export function getAccessToken(): string {
       clearAuthTokens()
       return ''
     }
+    return '' + token
+  } catch (e) {}
+  return ''
+}
+
+export function getRefreshToken(): string {
+  try {
+    const token = uni.getStorageSync(REFRESH_TOKEN_KEY)
+    if (token == null || token === '') return ''
+    const boundBase = uni.getStorageSync(TOKEN_BASE_KEY)
+    const base = boundBase != null ? String(boundBase) : ''
+    // 与 getAccessToken 同款环境绑定校验：换后端后旧 refresh_token 视为无效，
+    // 避免拿上一套后端的 refresh_token 去打新后端（必然 401）。
+    if (base != '' && base != API_BASE_URL) return ''
     return '' + token
   } catch (e) {}
   return ''

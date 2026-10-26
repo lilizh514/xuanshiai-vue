@@ -164,7 +164,12 @@ const loadQuota = async () => {
 
 const openProfile = (userId: number) => {
 	if (Number(userId) <= 0) return
-	uni.navigateTo({ url: '/pages/user/detail?userId=' + Number(userId) })
+	// 名片详情页在 pagesSub/userExtra/user/detail；pages/user 下只有 edit，
+	// 旧写法 /pages/user/detail 是不存在的路由，点了会「页面不存在」。
+	uni.navigateTo({
+		url: '/pagesSub/userExtra/user/detail?userId=' + Number(userId),
+		fail: () => { uni.showToast({ title: '资料打开失败，请重试', icon: 'none' }) }
+	})
 }
 
 const startChat = async (item: any) => {
@@ -179,6 +184,22 @@ const startChat = async (item: any) => {
 		return
 	}
 	uni.showToast({ title: session != null && session.message != null ? '' + session.message : '聊天会话暂时不可用，请稍后重试', icon: 'none' })
+}
+
+/**
+ * 同意成功后的引导：后端在 accept 时已建好会话 + 写入系统问候，
+ * 直接把用户送到聊天页，避免他还要自己退回消息列表找会话。
+ */
+const askStartChat = (item: any) => {
+	uni.showModal({
+		title: '已同意',
+		content: '已为你们建好聊天，并发送了一条问候',
+		confirmText: '去看看',
+		cancelText: '稍后',
+		success: (res) => {
+			if (res.confirm) startChat(item)
+		}
+	})
 }
 
 const rejectApplication = async (item: any) => {
@@ -219,7 +240,10 @@ const agreeApplication = async (item: any) => {
 		item.statusCode = 'accepted'
 		item.status = '已同意'
 		item.statusClass = 'approved'
-		uni.showToast({ title: '已同意，可开始聊天', icon: 'success' })
+		// 同意时后端已建好会话并写入系统问候，这里拉一次让列表与后端对齐，
+		// item 仍保留 userId / name，可直接用于跳转。
+		await loadApplications()
+		askStartChat(item)
 	} catch (error) {
 		uni.showToast({ title: '同意失败，请重试', icon: 'none' })
 	} finally {
