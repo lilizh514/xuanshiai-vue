@@ -244,8 +244,20 @@ export async function getOwnProfile() {
   return request({ url: '/users/me/profile', method: 'GET' })
 }
 
-/** 标签目录随前端发布，进入编辑页即可展示；只有用户选择结果提交后端。 */
+/**
+ * 标签目录：
+ * - mock 模式直接返回前端内置快照（由 scripts/sync-profile-tags.py 从后端 app/core/profile_tags.py 生成）；
+ * - 真实模式请求后端 GET /profile/tag-options 获取最新目录，请求失败时回退本地快照，
+ *   保证编辑器始终可用。后端响应契约见 app/services/profile.py:get_tag_options。
+ */
 export async function getProfileTagOptions() {
+  if (USE_MOCK) {
+    return okRes(mockProfileTagOptions)
+  }
+  const res = await request({ url: '/profile/tag-options', method: 'GET' })
+  if (res.success && res.data && Array.isArray(res.data.categories) && res.data.categories.length > 0) {
+    return okRes(res.data)
+  }
   return okRes(mockProfileTagOptions)
 }
 
@@ -797,7 +809,7 @@ export async function getMyLikedProfiles(page: number = 1, pageSize: number = 20
     })
   }
   return await request({
-    url: '/users/me/likes',
+    url: '/relations/likes',
     method: 'GET',
     data: { page, page_size: pageSize }
   })

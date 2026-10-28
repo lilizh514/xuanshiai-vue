@@ -84,8 +84,9 @@ async function main() {
   assert.match(source, /搜索兴趣标签/)
   const userApi = fs.readFileSync(path.join(root, 'api/user.uts'), 'utf8')
   const tagOptionsApi = userApi.split('export async function getProfileTagOptions()')[1].split('export async function updateOwnProfile')[0]
-  assert.match(tagOptionsApi, /okRes\(mockProfileTagOptions\)/, 'the editor catalog must be bundled with the frontend')
-  assert.doesNotMatch(tagOptionsApi, /request\(/, 'opening the editor must not fetch its catalog from the backend')
+  assert.match(tagOptionsApi, /USE_MOCK/, 'tag catalog still falls back to the bundled snapshot in mock mode')
+  assert.match(tagOptionsApi, /\/profile\/tag-options/, 'tag catalog must fetch the catalog from the backend when not in mock mode')
+  assert.match(tagOptionsApi, /okRes\(mockProfileTagOptions\)/, 'tag catalog falls back to the bundled snapshot when the backend request fails')
   // 跨仓路径统一走 tests/helpers/cross-repo.cjs；后端不可达时显式 SKIP，
   // 不静默假装通过（CI 只检出前端仓库）。
   const { backendRoot: resolveBackendRoot } = require('./helpers/cross-repo.cjs')

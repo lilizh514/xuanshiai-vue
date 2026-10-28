@@ -52,11 +52,12 @@ for (const retired of ['getUserProfileUnlockStatus', 'unlockUserProfile', 'getCh
 
 assert.match(userApi, /url:\s*'\/users\/me\/nickname'/, 'updateOwnNickname must use the authenticated nickname endpoint')
 assert.match(userApi, /method:\s*'PATCH'/, 'updateOwnNickname must use PATCH')
-// 标签目录自 461c19a 起随前端发布：mock/profile-tags.uts 由 scripts/sync-profile-tags.py
-// 从后端 app/core/profile_tags.py 生成，编辑页不再请求目录接口（与 test-personal-tags 同一口径）。
+// 标签目录：mock 模式用前端内置快照（由 scripts/sync-profile-tags.py 从后端生成），
+// 真实模式改为请求后端 GET /profile/tag-options，失败时回退本地快照。
 const tagOptionsApi = userApi.split('export async function getProfileTagOptions()')[1].split('export async function updateOwnProfile')[0]
-assert.match(tagOptionsApi, /okRes\(mockProfileTagOptions\)/, 'getProfileTagOptions must serve the bundled catalog synced from backend constants')
-assert.doesNotMatch(tagOptionsApi, /request\(/, 'getProfileTagOptions must not fetch its catalog from the backend')
+assert.match(tagOptionsApi, /USE_MOCK/, 'getProfileTagOptions must still fall back to the bundled catalog in mock mode')
+assert.match(tagOptionsApi, /\/profile\/tag-options/, 'getProfileTagOptions must fetch the catalog from the backend when not in mock mode')
+assert.match(tagOptionsApi, /okRes\(mockProfileTagOptions\)/, 'getProfileTagOptions must fall back to the bundled catalog when the backend request fails')
 assert.match(messageApi, /export async function getChatSessionId\b/, 'api/message.uts must implement getChatSessionId')
 assert.match(messageApi, /getChatPermission\(targetUserId, subject\)/, 'chat-session lookup must preserve the mutual-consent gate')
 

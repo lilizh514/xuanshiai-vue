@@ -1179,7 +1179,7 @@ export async function uploadChatMedia(
   const token = getAccessToken()
   return await new Promise<any>((resolve) => {
     uni.uploadFile({
-      url: buildApiUrl('/message/media/uploads'),
+      url: buildApiUrl('/media/uploads'),
       filePath: filePath,
       name: 'file',
       formData: { peerUserId: '' + userId },
