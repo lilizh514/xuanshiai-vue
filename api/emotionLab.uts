@@ -1,7 +1,7 @@
 /** 情感实验室 MBTI API 与跨端数据契约。 */
 
 import { request } from './request.uts'
-import { CURRENT_USER_ID_KEY, EMOTION_LAB_USE_MOCK, getAccessToken } from './config.uts'
+import { CURRENT_USER_ID_KEY, EMOTION_LAB_USE_MOCK } from './config.uts'
 import {
   getEmotionLabSummaryData,
   startEmotionLabSessionData,
@@ -149,7 +149,7 @@ function resolveEmotionLabSubject(): string {
   try {
     const storedUserId = uni.getStorageSync(CURRENT_USER_ID_KEY)
     const userId = storedUserId != null ? String(storedUserId).trim() : ''
-    if (userId != '' && getAccessToken() != '') return 'user:' + userId
+    if (userId != '') return 'user:' + userId
   } catch (error) {}
   return resolveGuestSubject()
 }
@@ -301,8 +301,7 @@ export async function discardEmotionLabSession(sessionId: string) {
 
 /**
  * 「合拍的人」推荐列表。
- * 推荐服务尚未接入；真实模式明确返回未开放，不用空列表伪装成功。
- * 独立 Mock 模式保留上游的推荐界面演示能力。
+ * 后端 /emotion-lab/matches 尚未就绪，当前走 Mock；联调完成后去掉 EMOTION_LAB_USE_MOCK 短路即可。
  */
 export async function getEmotionLabMatches(mbtiType: string = '') {
   if (EMOTION_LAB_USE_MOCK) {
@@ -312,10 +311,12 @@ export async function getEmotionLabMatches(mbtiType: string = '') {
       return failed(error)
     }
   }
-  return {
-    success: false, data: null, code: 'EMOTION_MATCHES_UNAVAILABLE',
-    message: '合拍推荐暂未开放；你可以继续完成测试与管理自己的 MBTI 资料。'
-  }
+  return request({
+    url: '/emotion-lab/matches',
+    method: 'GET',
+    data: { mbtiType: mbtiType },
+    mockData: null
+  })
 }
 
 /** 公开业务命名；下方旧名称保留为兼容层。 */

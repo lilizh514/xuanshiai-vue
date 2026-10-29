@@ -3,7 +3,6 @@
  * import { getRecommendUser, getMessageList } from '@/api'
  */
 
-export { getCurrentAccountKey } from './request.uts'
 // 配置开关（页面只允许从 '@/api' 取，禁止直接引 api/config.uts）
 export { EMOTION_LAB_USE_MOCK } from './config.uts'
 
@@ -151,10 +150,6 @@ export type {
 // 父母端相关
 export {
   getParentContext,
-  getParentPreferences,
-  updateParentPreferences,
-  getParentAlerts,
-  parentAuthorizationRequest,
   getParentAuthenticationGate,
   updateParentChildProfile,
   getParentAccessGate,
