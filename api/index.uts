@@ -4,6 +4,8 @@
  */
 
 export { getCurrentAccountKey } from './request.uts'
+// 配置开关（页面只允许从 '@/api' 取，禁止直接引 api/config.uts）
+export { EMOTION_LAB_USE_MOCK } from './config.uts'
 
 // 认证相关
 export {
@@ -45,6 +47,7 @@ export {
 export {
   getDiscoveryRecommendations,
   getDiscoveryPlaza,
+  getUserCardPreview,
   getProfileOverview,
   getBrowseHistory,
   getVisitors,
@@ -62,6 +65,7 @@ export {
 } from './discovery.uts'
 // 择偶偏好（详情页「Ta 的理想型」）
 export { getUserPartnerPreference } from './preference.uts'
+export { getPointProducts, getPointsSummary, getMyQuotas, redeemPointProduct } from './points.uts'
 // AI 资料卡成稿出口
 export { summarizeProfileCard, getProfileCardDraft, applyProfileCardDraft, waitForProfileCardTask } from './ai-profile-card.uts'
 
@@ -94,7 +98,9 @@ export {
   markConversationRead,
   setChatSessionPinned,
   hideChatSession,
-  restoreChatSession
+  restoreChatSession,
+  getMyAvatarUrl,
+  resetMyAvatarCache
 } from './message.uts'
 export {
   ADVISOR_SCENARIOS,
